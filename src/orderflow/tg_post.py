@@ -365,8 +365,7 @@ def funding_report(*, refresh: bool = True) -> tuple[str, Path]:
         + "\n\n"
         + verdict
         + "\n\nСчитается автоматически из истории выплат Binance с 2019 года. "
-        "Код: github.com/AASuvorov/orderflow\n\n"
-        "#издержки@tradingnadannyh"
+        + footer("funding")
     )
     return text, funding_chart(data)
 
@@ -440,8 +439,7 @@ def costs_report() -> tuple[str, Path]:
         "точности при том же движении цены — поэтому инструмент выбирают по "
         "издержкам, а не по оборотам.\n\n"
         "Замер автоматический, по текущим спецификациям МОЕХ. "
-        "Код: github.com/AASuvorov/orderflow\n\n"
-        "#издержки@tradingnadannyh"
+        + footer("costs")
     )
     return text, costs_chart(rows)
 
@@ -533,8 +531,7 @@ def spread_report(snapshots_n: int = 10) -> tuple[str, Path]:
         "adverse selection съедает спред целиком: нетто по кругу выходит от −3.75 "
         "до −14.78 б.п. То есть широкий спред — это не приглашение, а плата за "
         "риск, который в среднем реализуется.\n\n"
-        "Код: github.com/AASuvorov/orderflow\n\n"
-        "#издержки@tradingnadannyh"
+        + footer("spread")
     )
     return text, spread_chart(df)
 
@@ -676,8 +673,7 @@ def session_report() -> tuple[str, Path]:
         + ".\n\nВажная оговорка, чтобы это не читалось как сигнал: односторонний "
         "поток сам по себе направление не предсказывает. Я это замерял — знак "
         "эффекта зависит от режима рынка, а не от перекоса потока.\n\n"
-        "Код: github.com/AASuvorov/orderflow\n\n"
-        "#разбор@tradingnadannyh"
+        + footer("session")
     )
     return text, session_chart(rows, day)
 
@@ -697,6 +693,28 @@ MIN_OPEN_INTEREST = 10_000
 # Ниже этого движения цену считаем стоящей на месте, %. Иначе шум в сотых долях
 # процента описывался бы как падение или рост, чего в данных нет.
 FLAT_BAND_PCT = 0.3
+
+# Хештеги по отчётам. Намеренно без привязки к каналу: форма #тег@канал ищет
+# только внутри своего канала и в глобальный поиск Telegram не попадает. Для
+# канала, который ещё никто не знает, это выключенный механизм обнаружения —
+# единственный, который работает при двух подписчиках. Навигация внутри канала
+# на таком размере не нужна.
+TAGS = {
+    "morning": ("#МОЕХ", "#фьючерсы", "#итогисессии"),
+    "session": ("#МОЕХ", "#фьючерсы", "#объёмы"),
+    "funding": ("#фандинг", "#Binance", "#крипта"),
+    "costs": ("#МОЕХ", "#фьючерсы", "#издержки"),
+    "spread": ("#Binance", "#крипта", "#маркетмейкинг"),
+    "week": ("#МОЕХ", "#фандинг", "#итогинедели"),
+}
+
+
+def footer(report: str) -> str:
+    """Подпись поста: ссылка на код и хештеги для глобального поиска."""
+    return (
+        "Код: github.com/AASuvorov/orderflow\n\n"
+        + " ".join(TAGS[report])
+    )
 
 
 def market_day(date: str) -> pl.DataFrame:
@@ -932,16 +950,157 @@ def morning_report() -> tuple[str, Path]:
         "а не выход из позиций. По одной серии брифинг сообщал бы массовый уход "
         "денег каждый квартал.\n\n"
         "Источник — открытый ISS Московской биржи, без посредников. "
-        "Код: github.com/AASuvorov/orderflow\n\n"
-        "#сессия@tradingnadannyh"
+        + footer("morning")
     )
     return text, brief_chart(df, date)
+
+
+# --------------------------------------------------------------------------- #
+# Отчёт 6: итоги недели
+# --------------------------------------------------------------------------- #
+
+# Сессий в каждой половине сравнения. Пять — рабочая неделя МОЕХ.
+WEEK_SESSIONS = 5
+# Сколько самых оборотистых активов попадает и в текст, и на график.
+WEEK_TOP_ASSETS = 10
+
+
+def annualized_window(df: pl.DataFrame, start_days: int, end_days: int) -> float:
+    """Ставка за окно [start_days, end_days) назад, приведённая к годовой, %.
+
+    Нужна именно оконная версия, а не хвостовая: для сравнения недели с
+    предыдущей нельзя брать два хвоста — второй включает первый и разница
+    размывается вдвое.
+    """
+    last = df["ts"].max()
+    tail = df.filter(
+        (pl.col("ts") > last - pl.duration(days=start_days))
+        & (pl.col("ts") <= last - pl.duration(days=end_days))
+    )
+    if tail.is_empty():
+        return float("nan")
+    return float(tail["rate"].mean() * PERIODS_PER_YEAR * 100)
+
+
+def week_moex() -> pl.DataFrame:
+    """Оборот и открытый интерес: последняя неделя против предыдущей, по активам."""
+    sessions = trading_sessions(WEEK_SESSIONS * 2)
+    frame = brief_frame(sessions)
+    dates = frame["дата"].unique().sort().to_list()
+    recent, prior = dates[-WEEK_SESSIONS:], dates[:-WEEK_SESSIONS]
+
+    def agg(days: list[str], suffix: str) -> pl.DataFrame:
+        return (
+            frame.filter(pl.col("дата").is_in(days))
+            .group_by("ASSETCODE")
+            .agg(
+                pl.col("оборот_млн").sum().alias(f"оборот{suffix}"),
+                # Интерес — состояние, а не поток, поэтому усредняется, не суммируется.
+                pl.col("интерес").mean().alias(f"интерес{suffix}"),
+            )
+        )
+
+    return (
+        agg(recent, "")
+        .join(agg(prior, "_пред"), on="ASSETCODE")
+        .filter(
+            (pl.col("оборот") >= MIN_TURNOVER_MRUB * WEEK_SESSIONS)
+            & (pl.col("оборот_пред") >= MIN_TURNOVER_MRUB * WEEK_SESSIONS)
+            & (pl.col("интерес_пред") >= MIN_OPEN_INTEREST)
+        )
+        .with_columns(
+            ((pl.col("оборот") / pl.col("оборот_пред") - 1) * 100).alias("оборот_%"),
+            ((pl.col("интерес") / pl.col("интерес_пред") - 1) * 100).alias("интерес_%"),
+        )
+        .sort("оборот", descending=True)
+    )
+
+
+def week_chart(df: pl.DataFrame) -> Path:
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    path = OUT_DIR / "week_digest.png"
+
+    names = df["ASSETCODE"].to_list()
+    interest = df["интерес_%"].to_numpy()
+    colors = ["tab:green" if v > 0 else "tab:red" for v in interest]
+
+    y = np.arange(len(names))
+    fig, ax = plt.subplots(figsize=(10, 0.55 * len(names) + 2.6))
+    ax.barh(y, interest, color=colors)
+    ax.axvline(0, color="black", lw=1)
+
+    span = max(np.abs(interest)) * 1.3 or 1.0
+    ax.set_xlim(-span, span)
+    for i, v in enumerate(interest):
+        ax.text(v + span * 0.03 * (1 if v >= 0 else -1), i, f"{v:+.1f}%",
+                va="center", ha="left" if v >= 0 else "right", fontsize=9)
+
+    ax.set_yticks(y)
+    ax.set_yticklabels(names)
+    ax.invert_yaxis()
+    ax.set_xlabel("изменение среднего открытого интереса, % к прошлой неделе")
+    ax.set_title(
+        f"Куда за неделю двигались деньги на МОЕХ: {len(names)} самых оборотистых\n"
+        f"средний открытый интерес по всем сериям, {WEEK_SESSIONS} сессий против "
+        f"предыдущих {WEEK_SESSIONS}"
+    )
+    ax.grid(axis="x", alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return path
+
+
+def week_report() -> tuple[str, Path]:
+    moex = week_moex()
+    if moex.is_empty():
+        raise RuntimeError("недостаточно сессий для сравнения недель")
+
+    # Выводы и график считаются по одному и тому же набору — самым оборотистым
+    # активам. Иначе главным событием недели становится малозаметный контракт с
+    # низкой базой, которого на графике нет, и текст расходится с картинкой.
+    moex = moex.head(WEEK_TOP_ASSETS)
+
+    inflow = moex.sort("интерес_%", descending=True).head(1).row(0, named=True)
+    outflow = moex.sort("интерес_%").head(1).row(0, named=True)
+    busiest = moex.sort("оборот_%", descending=True).head(1).row(0, named=True)
+
+    lines: list[str] = []
+    for sym in FUNDING_SYMBOLS:
+        df = refresh_funding(sym)
+        now, prev = annualized_window(df, 7, 0), annualized_window(df, 14, 7)
+        short = sym.replace("USDT", "")
+        delta = now - prev
+        lines.append(
+            f"<b>{html.escape(short)}</b>: {now:+.1f}% годовых "
+            f"({'вырос' if delta > 0 else 'упал'} на {abs(delta):.1f} п.п.)"
+        )
+
+    text = (
+        "<b>Итоги недели в цифрах</b>\n\n"
+        "Не пересказ событий, а замеры: что изменилось за неделю там, где я меряю сам.\n\n"
+        "<b>Фандинг перпетуалов, неделя к предыдущей:</b>\n"
+        + "\n".join(lines)
+        + f"\n\n<b>Деньги на МОЕХ.</b> Больше всего прибавил открытый интерес у "
+        f"{html.escape(inflow['ASSETCODE'])}: {inflow['интерес_%']:+.1f}%. "
+        f"Сильнее всего сократился у {html.escape(outflow['ASSETCODE'])}: "
+        f"{outflow['интерес_%']:+.1f}%.\n\n"
+        f"<b>Оборот.</b> Резче всех выросли торги в "
+        f"{html.escape(busiest['ASSETCODE'])}: {busiest['оборот_%']:+.1f}% к прошлой "
+        f"неделе.\n\n"
+        "Открытый интерес — это состояние, а не поток, поэтому он усредняется по "
+        "сессиям, а не суммируется, и берётся по всем сериям актива: на ближней перед "
+        "экспирацией он падает из-за перекладки, а не из-за выхода из позиций.\n\n"
+        + footer("week")
+    )
+    return text, week_chart(moex)
 
 
 # --------------------------------------------------------------------------- #
 
 REPORTS = {
     "morning": morning_report,
+    "week": week_report,
     "funding": funding_report,
     "costs": costs_report,
     "spread": spread_report,
@@ -954,7 +1113,14 @@ REPORTS = {
 # Брифинг стоит трижды в неделю, потому что он единственный отвечает на вопрос
 # «что произошло вчера» — тот самый, с которым читатель открывает канал утром.
 # Остальные отчёты отвечают на вопрос «как устроен рынок» и не устаревают за день.
-SCHEDULE = {0: "morning", 1: "session", 2: "morning", 3: "spread", 4: "morning"}
+SCHEDULE = {
+    0: "morning",
+    1: "session",
+    2: "morning",
+    3: "funding",
+    4: "morning",
+    5: "week",  # суббота: итоги недели читают на выходных, а будни заняты брифингом
+}
 
 
 def daily(*, dry_run: bool = False) -> None:
