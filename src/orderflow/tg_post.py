@@ -96,16 +96,42 @@ def _call(method: str, *, files: dict | None = None, **data) -> dict:
 
 
 def check() -> None:
-    """Проверка доступа: бот существует и умеет писать в указанный канал."""
+    """Проверка доступа: бот существует, добавлен в канал и вправе публиковать.
+
+    Членство проверяется отдельно от getChat: для публичного канала getChat
+    отвечает и постороннему боту, поэтому сам по себе успех этого вызова ничего
+    не доказывает и создаёт ложное впечатление готовности.
+    """
     token, chat = _credentials()
     me = requests.get(API.format(token=token, method="getMe"), timeout=30).json()
     if not me.get("ok"):
         raise SystemExit(f"токен не принят: {me.get('description')}")
-    print(f"бот:   @{me['result']['username']}")
+    bot = me["result"]
+    print(f"бот:   @{bot['username']}")
 
     info = _call("getChat")
     print(f"канал: {info.get('title')} ({chat})")
-    print("права на публикацию проверятся только реальной отправкой:")
+
+    try:
+        member = _call("getChatMember", user_id=bot["id"])
+    except RuntimeError as exc:
+        raise SystemExit(
+            f"бот не в канале: {exc}\n\n"
+            f"Откройте канал -> Управление каналом -> Администраторы -> "
+            f"Добавить администратора -> @{bot['username']}\n"
+            f"Права: «Публикация сообщений» обязательно, «Закрепление» — если нужен "
+            f"автозакреп."
+        )
+
+    status = member.get("status")
+    can_post = member.get("can_post_messages", status == "creator")
+    print(f"статус: {status}, публикация: {'да' if can_post else 'НЕТ'}")
+    if not can_post:
+        raise SystemExit(
+            "нет права публиковать. Включите «Публикация сообщений» в правах "
+            f"администратора @{bot['username']}."
+        )
+    print("всё готово:")
     print("  uv run python tg_post.py funding --dry-run   # сначала посмотреть текст")
 
 
