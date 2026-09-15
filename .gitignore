@@ -1,0 +1,15 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Кэш данных: сотни мегабайт тиков и свечей, восстанавливается download.py
+data/*
+!data/risk_limits.json
+logs/
