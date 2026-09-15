@@ -27,12 +27,19 @@ case "$MODE" in
 push)
 	echo ">>> Код на $HOST:$APP_DIR"
 	ssh "$HOST" "mkdir -p $APP_DIR"
-	# Серверу нужны только сбор и сторож: анализ остаётся локально.
+	# Серверу нужны сбор, сторож и публикация: тяжёлый анализ остаётся локально.
+	# Публикация здесь потому, что отчёт о сессии читает свежие тики, а на
+	# ноутбуке они появляются только после pull.
 	rsync -avz "$SRC/moex_ticks.py" "$SRC/moex.py" "$SRC/watchdog.py" \
+		"$SRC/tg_post.py" "$SRC/funding.py" "$SRC/mm_screen.py" \
+		"$SRC/moex_feasibility.py" \
 		"$HOST:$APP_DIR/"
-	rsync -avz "$ROOT/deploy/install.sh" "$HOST:$APP_DIR/"
+	rsync -avz "$ROOT/deploy/install.sh" "$ROOT/deploy/install-tg.sh" \
+		"$HOST:$APP_DIR/"
 	echo
-	echo "Дальше на сервере:  ssh $HOST 'bash $APP_DIR/install.sh'"
+	echo "Дальше на сервере:"
+	echo "  ssh $HOST 'bash $APP_DIR/install.sh'      # сбор тиков"
+	echo "  ssh $HOST 'bash $APP_DIR/install-tg.sh'   # публикация в Telegram"
 	;;
 pull)
 	# Сначала в промежуточный каталог, потом объединение по TRADENO: так

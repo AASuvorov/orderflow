@@ -27,8 +27,10 @@
 оно входит в цену рекламы напрямую, поэтому наращивать частоту в ущерб ценности
 поста невыгодно даже чисто арифметически.
 
-На сервере systemd по образцу deploy/install.sh, локально проще через cron:
-  0 10 * * 1-5 cd .../src/orderflow && ../../.venv/bin/python tg_post.py daily
+Разворачивается на сервере рядом со сбором тиков — отчёт о сессии читает те же
+файлы, а на ноутбуке они появляются только после sync.sh pull:
+  bash deploy/sync.sh push root@IP
+  ssh root@IP 'bash /opt/orderflow/install-tg.sh'
 """
 
 from __future__ import annotations
@@ -52,6 +54,9 @@ from funding import CACHE as FUNDING_CACHE
 from funding import FAPI, PERIODS_PER_YEAR, fetch_funding
 from mm_screen import MAKER_BPS, screen
 from moex_feasibility import cost_bps
+# Каталог тиков берём у сборщика, а не собираем свой путь: он единственный знает,
+# куда реально пишет, и уважает ORDERFLOW_DATA.
+from moex_ticks import CACHE as TICKS_ROOT
 
 # Базовая мейкерская комиссия Binance, б.п. — порог необходимого условия мейкинга.
 MAKER_FEE_BPS = MAKER_BPS["базовый 0.02%"]
@@ -62,14 +67,14 @@ MAJORS = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
 # Запас на выходные и праздники МОЕХ: в понедельник свежайшей будет пятничная сессия.
 MAX_SESSION_AGE_DAYS = 4
 
-TICKS_ROOT = Path(__file__).resolve().parents[2] / "data" / "moex_ticks"
-
 API = "https://api.telegram.org/bot{token}/{method}"
 # Telegram режет подпись к фото на 1024 символах, обычное сообщение — на 4096.
 CAPTION_LIMIT = 1024
 MESSAGE_LIMIT = 4096
 
-OUT_DIR = Path(__file__).resolve().parents[2] / "reports" / "tg"
+# Картинки перегенерируются при каждом запуске, поэтому лежат рядом с данными, а
+# не в reports/: на сервере каталог кода недоступен для записи.
+OUT_DIR = TICKS_ROOT.parent / "tg"
 
 FUNDING_SYMBOLS = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
 # Контракты отобраны по издержкам круга, тот же список, что в deploy/install.sh.

@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 
@@ -18,7 +19,12 @@ import polars as pl
 import requests
 
 FAPI = "https://fapi.binance.com/fapi/v1/fundingRate"
-CACHE = Path(__file__).resolve().parents[2] / "data" / "funding"
+# ORDERFLOW_DATA — общая для проекта переменная: на сервере код и данные лежат в
+# разных каталогах, и без неё путь от файла модуля уводит кэш в корень диска.
+DATA_ROOT = Path(
+    os.environ.get("ORDERFLOW_DATA", Path(__file__).resolve().parents[2] / "data")
+)
+CACHE = DATA_ROOT / "funding"
 PERIODS_PER_YEAR = 365 * 3  # фандинг каждые 8 часов
 
 
