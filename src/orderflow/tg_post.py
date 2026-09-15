@@ -33,6 +33,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import html
 import os
 import sys
@@ -57,6 +58,9 @@ MAKER_FEE_BPS = MAKER_BPS["базовый 0.02%"]
 
 # Ликвидные пары для сравнения: на них спред упирается в один тик.
 MAJORS = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
+
+# Запас на выходные и праздники МОЕХ: в понедельник свежайшей будет пятничная сессия.
+MAX_SESSION_AGE_DAYS = 4
 
 TICKS_ROOT = Path(__file__).resolve().parents[2] / "data" / "moex_ticks"
 
@@ -528,6 +532,15 @@ def latest_session() -> tuple[str, dict[str, pl.DataFrame]]:
         raise RuntimeError("каталог тиков пуст — сначала нужен сбор")
 
     day = files[-1].stem
+    age = (dt.date.today() - dt.date.fromisoformat(day)).days
+    if age > MAX_SESSION_AGE_DAYS:
+        # Данные есть, но старые — а это худший случай: обычная проверка на
+        # существование файла его пропустит, и канал начнёт публиковать вчерашнюю
+        # сессию как сегодняшнюю. Отказ здесь переводит расписание на другой отчёт.
+        raise RuntimeError(
+            f"последняя сессия {day}, это {age} дней назад — сбор тиков не идёт"
+        )
+
     data = {p.parent.name: pl.read_parquet(p) for p in files if p.stem == day}
     return day, data
 
