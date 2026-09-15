@@ -18,13 +18,17 @@
   4. uv run python tg_post.py check
 
 Запуск:
-  uv run python tg_post.py funding --dry-run   # посмотреть текст, ничего не отправляя
-  uv run python tg_post.py funding             # опубликовать
-  uv run python tg_post.py costs
+  uv run python tg_post.py daily --dry-run     # отчёт этого дня недели, без отправки
+  uv run python tg_post.py daily               # опубликовать отчёт дня
+  uv run python tg_post.py funding             # конкретный отчёт вручную
 
-Расписание — раз в неделю, чтобы цифры успевали измениться. На сервере systemd
-по образцу deploy/install.sh, локально проще через cron:
-  0 10 * * 1 cd .../src/orderflow && ../../.venv/bin/python tg_post.py funding
+Расписание — раз в день по будням, режим daily сам выбирает рубрику по дню недели
+(см. SCHEDULE). Один пост в день держит регулярность, но не роняет дочитывание:
+оно входит в цену рекламы напрямую, поэтому наращивать частоту в ущерб ценности
+поста невыгодно даже чисто арифметически.
+
+На сервере systemd по образцу deploy/install.sh, локально проще через cron:
+  0 10 * * 1-5 cd .../src/orderflow && ../../.venv/bin/python tg_post.py daily
 """
 
 from __future__ import annotations
@@ -45,7 +49,16 @@ import requests
 
 from funding import CACHE as FUNDING_CACHE
 from funding import FAPI, PERIODS_PER_YEAR, fetch_funding
+from mm_screen import MAKER_BPS, screen
 from moex_feasibility import cost_bps
+
+# Базовая мейкерская комиссия Binance, б.п. — порог необходимого условия мейкинга.
+MAKER_FEE_BPS = MAKER_BPS["базовый 0.02%"]
+
+# Ликвидные пары для сравнения: на них спред упирается в один тик.
+MAJORS = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
+
+TICKS_ROOT = Path(__file__).resolve().parents[2] / "data" / "moex_ticks"
 
 API = "https://api.telegram.org/bot{token}/{method}"
 # Telegram режет подпись к фото на 1024 символах, обычное сообщение — на 4096.
@@ -399,11 +412,266 @@ def costs_report() -> tuple[str, Path]:
 
 
 # --------------------------------------------------------------------------- #
+# Отчёт 3: скрининг спредов для мейкинга
+# --------------------------------------------------------------------------- #
+
+
+def spread_chart(df: pl.DataFrame) -> Path:
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    path = OUT_DIR / "spread_weekly.png"
+
+    # Топ вместе с мажорами: без них график показывал бы только проходящие порог
+    # и терял главное — что на самых ликвидных парах спреда нет вообще.
+    top = df.head(9)
+    majors = df.filter(pl.col("symbol").is_in(MAJORS))
+    rows = list(top.iter_rows(named=True)) + list(majors.iter_rows(named=True))
+
+    names = [r["symbol"].replace("USDT", "") for r in rows]
+    half = [r["полспреда_бп"] for r in rows]
+    colors = ["tab:blue"] * top.height + ["tab:orange"] * majors.height
+
+    y = np.arange(len(names))
+    fig, ax = plt.subplots(figsize=(10, 0.5 * len(names) + 2.2))
+    ax.barh(y, half, color=colors)
+    ax.axvline(MAKER_FEE_BPS, color="firebrick", ls="--", lw=1.4,
+               label=f"мейкерская комиссия {MAKER_FEE_BPS} б.п.")
+    for i, v in enumerate(half):
+        ax.text(v + 0.05, i, f"{v:.2f}", va="center", fontsize=9)
+    ax.text(
+        0.98, 0.06,
+        "оранжевым — самые ликвидные пары: спреда нет вовсе",
+        transform=ax.transAxes, ha="right", color="tab:orange", fontsize=9,
+    )
+
+    ax.set_yticks(y)
+    ax.set_yticklabels(names)
+    ax.invert_yaxis()
+    ax.set_xlabel("половина спреда, базисных пунктов")
+    ax.set_title(
+        "Что достаётся мейкеру до вычета adverse selection\n"
+        "перпетуалы Binance с оборотом больше 20 млн $ в сутки"
+    )
+    ax.legend()
+    ax.grid(axis="x", alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return path
+
+
+def spread_report(snapshots_n: int = 10) -> tuple[str, Path]:
+    """Сколько инструментов проходят необходимое условие мейкинга.
+
+    Условие только необходимое: половина спреда больше комиссии. Достаточным оно
+    не становится — adverse selection вычитается уже после и, по замерам проекта,
+    съедает спред целиком. Об этом сказано прямо в тексте, иначе пост читался бы
+    как приглашение торговать.
+    """
+    df = screen(n=snapshots_n)
+    col = "брутто [базовый 0.02%]"
+    viable = df.filter(pl.col(col) > 0)
+
+    majors = df.filter(pl.col("symbol").is_in(MAJORS))
+    majors_txt = "\n".join(
+        f"<b>{html.escape(r['symbol'].replace('USDT', ''))}</b>: спред "
+        f"{r['спред_бп']:.2f} б.п., полспреда {r['полспреда_бп']:.2f} — "
+        f"{'выше' if r['полспреда_бп'] > MAKER_FEE_BPS else 'ниже'} комиссии"
+        for r in majors.iter_rows(named=True)
+    )
+
+    best = viable.head(3)
+    best_txt = ", ".join(
+        f"{html.escape(r['symbol'].replace('USDT', ''))} ({r['полспреда_бп']:.2f})"
+        for r in best.iter_rows(named=True)
+    ) or "ни одного"
+
+    text = (
+        "<b>Где мейкеру вообще есть что зарабатывать</b>\n\n"
+        "Необходимое условие мейкинга простое: половина спреда должна быть больше "
+        f"комиссии ({MAKER_FEE_BPS} б.п.). Иначе схема убыточна ещё до всякого "
+        "движения цены.\n\n"
+        f"Проверил все перпетуалы с оборотом выше 20 млн $ в сутки — их "
+        f"{df.height}. Условие проходят <b>{viable.height}</b>. "
+        f"Лучшие по полуспреду: {best_txt}.\n\n"
+        f"{majors_txt}\n\n"
+        "Но условие только необходимое. По моим замерам на 6 млн исполнений "
+        "adverse selection съедает спред целиком: нетто по кругу выходит от −3.75 "
+        "до −14.78 б.п. То есть широкий спред — это не приглашение, а плата за "
+        "риск, который в среднем реализуется.\n\n"
+        "Код: github.com/AASuvorov/orderflow\n\n"
+        "#издержки@tradingnadannyh"
+    )
+    return text, spread_chart(df)
+
+
+# --------------------------------------------------------------------------- #
+# Отчёт 4: вчерашняя сессия МОЕХ по собственным тикам
+# --------------------------------------------------------------------------- #
+
+
+def _num(value: int) -> str:
+    """Разряды разделяются пробелом, как принято в русском тексте.
+
+    Через str.format с запятой делать нельзя: замена запятых в готовой строке
+    затронула бы и знаки препинания самого текста.
+    """
+    return f"{value:,}".replace(",", "\u00a0")
+
+
+def latest_session() -> tuple[str, dict[str, pl.DataFrame]]:
+    """Самая свежая дата, по которой есть собранные тики, и данные по ней."""
+    if not TICKS_ROOT.exists():
+        raise RuntimeError(f"нет собранных тиков: {TICKS_ROOT}")
+
+    files = sorted(TICKS_ROOT.glob("*/*.parquet"))
+    if not files:
+        raise RuntimeError("каталог тиков пуст — сначала нужен сбор")
+
+    day = files[-1].stem
+    data = {p.parent.name: pl.read_parquet(p) for p in files if p.stem == day}
+    return day, data
+
+
+def session_chart(rows: list[dict], day: str) -> Path:
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    path = OUT_DIR / "session_daily.png"
+
+    names = [r["контракт"] for r in rows]
+    share = [r["дельта_доля_%"] for r in rows]
+    colors = ["tab:green" if s > 0 else "tab:red" for s in share]
+
+    y = np.arange(len(names))
+    fig, ax = plt.subplots(figsize=(10, 0.5 * len(names) + 2.4))
+    ax.barh(y, share, color=colors)
+    ax.axvline(0, color="black", lw=1)
+    for i, s in enumerate(share):
+        ax.text(s + (0.15 if s >= 0 else -0.15), i, f"{s:+.1f}%",
+                va="center", ha="left" if s >= 0 else "right", fontsize=9)
+
+    # Запас по краям: подписи выносятся за конец столбца и иначе налезают на ось.
+    limit = max(abs(s) for s in share) * 1.22
+    ax.set_xlim(-limit, limit)
+
+    ax.set_yticks(y)
+    ax.set_yticklabels(names)
+    ax.invert_yaxis()
+    ax.set_xlabel("перевес агрессивных покупок над продажами, % от объёма")
+    ax.set_title(
+        f"Сессия МОЕХ {day}: куда давил агрессор\n"
+        "по собственным тикам со стороной инициатора сделки"
+    )
+    ax.grid(axis="x", alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return path
+
+
+def session_report() -> tuple[str, Path]:
+    day, data = latest_session()
+
+    rows: list[dict] = []
+    for contract, df in data.items():
+        if df.is_empty():
+            continue
+        vol = float(df["qty"].sum())
+        delta = float((df["qty"] * df["side"]).sum())
+        # Самый односторонний час: там, где перевес одной стороны максимален.
+        hourly = (
+            df.with_columns(pl.col("ts").dt.hour().alias("час"))
+            .group_by("час")
+            .agg(
+                (pl.col("qty") * pl.col("side")).sum().alias("дельта"),
+                pl.col("qty").sum().alias("объём"),
+            )
+            .filter(pl.col("объём") > 0)
+            .with_columns((pl.col("дельта") / pl.col("объём") * 100).alias("доля"))
+            .sort(pl.col("доля").abs(), descending=True)
+        )
+        top_hour = hourly.row(0, named=True) if not hourly.is_empty() else None
+        rows.append({
+            "контракт": contract,
+            "объём": vol,
+            "дельта_доля_%": round(delta / vol * 100, 1) if vol else 0.0,
+            "сделок": df.height,
+            "час": top_hour["час"] if top_hour else None,
+            "час_доля": round(top_hour["доля"], 1) if top_hour else None,
+        })
+
+    if not rows:
+        raise RuntimeError(f"сессия {day} пуста")
+
+    rows.sort(key=lambda r: abs(r["дельта_доля_%"]), reverse=True)
+    top = rows[0]
+    total_trades = sum(r["сделок"] for r in rows)
+
+    listing = "\n".join(
+        f"<b>{html.escape(r['контракт'])}</b>: {r['дельта_доля_%']:+.1f}% "
+        f"(сделок {_num(r['сделок'])})"
+        for r in rows[:6]
+    )
+
+    text = (
+        f"<b>Сессия МОЕХ {html.escape(day)}: куда давил агрессор</b>\n\n"
+        f"Я собираю тики со стороной инициатора сделки — той, кто ударил по цене, "
+        f"а не просто стоял в стакане. За сессию накопилось "
+        f"{_num(total_trades)} сделок по {len(rows)} контрактам."
+        + "\n\nПеревес агрессивных покупок над продажами, % от объёма:\n\n"
+        + listing
+        + f"\n\nСильнее всего перекошен <b>{html.escape(top['контракт'])}</b>: "
+        f"{top['дельта_доля_%']:+.1f}% за сессию"
+        + (f", пик в {top['час']}:00 МСК ({top['час_доля']:+.1f}%)"
+           if top["час"] is not None else "")
+        + ".\n\nВажная оговорка, чтобы это не читалось как сигнал: односторонний "
+        "поток сам по себе направление не предсказывает. Я это замерял — знак "
+        "эффекта зависит от режима рынка, а не от перекоса потока.\n\n"
+        "Код: github.com/AASuvorov/orderflow\n\n"
+        "#разбор@tradingnadannyh"
+    )
+    return text, session_chart(rows, day)
+
+
+# --------------------------------------------------------------------------- #
 
 REPORTS = {
     "funding": funding_report,
     "costs": costs_report,
+    "spread": spread_report,
+    "session": session_report,
 }
+
+# Утренняя рубрика по дням недели. Понедельник = 0.
+# Выходные пропускаются: МОЕХ закрыта, а дочитывание в субботу и воскресенье ниже.
+SCHEDULE = {0: "costs", 1: "session", 2: "funding", 3: "spread", 4: "session"}
+
+
+def daily(*, dry_run: bool = False) -> None:
+    """Публикует отчёт этого дня недели, с запасными вариантами.
+
+    Расписание запускается без присмотра, поэтому отказ одного источника не
+    должен приводить к молчанию: если сегодняшний отчёт не собрался, берётся
+    следующий из списка. Молчаливый пропуск хуже повтора — он ломает
+    регулярность, от которой зависит и индексация, и попадание в рекомендации.
+    """
+    weekday = time.localtime().tm_wday
+    if weekday not in SCHEDULE:
+        print(f"выходной (день {weekday}) — публикации нет")
+        return
+
+    order = [SCHEDULE[weekday]] + [n for n in REPORTS if n != SCHEDULE[weekday]]
+    errors: list[str] = []
+    for name in order:
+        try:
+            text, image = REPORTS[name]()
+        except Exception as exc:
+            errors.append(f"{name}: {exc}")
+            print(f"{name} не собрался ({exc}), пробую следующий")
+            continue
+        print(f"отчёт дня: {name}")
+        publish(text, image, dry_run=dry_run)
+        return
+
+    raise RuntimeError("ни один отчёт не собрался:\n  " + "\n  ".join(errors))
 
 
 def main(argv: list[str]) -> None:
@@ -412,11 +680,15 @@ def main(argv: list[str]) -> None:
 
     if not args or args[0] in {"-h", "--help", "help"}:
         print(__doc__)
-        print(f"отчёты: {', '.join(REPORTS)}, check")
+        print(f"команды: daily, check; отчёты: {', '.join(REPORTS)}")
         return
 
     if args[0] == "check":
         check()
+        return
+
+    if args[0] == "daily":
+        daily(dry_run=dry)
         return
 
     name = args[0]
