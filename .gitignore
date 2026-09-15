@@ -13,3 +13,6 @@ wheels/
 data/*
 !data/risk_limits.json
 logs/
+
+# Картинки автопостов перегенерируются при каждом запуске
+reports/tg/
