@@ -168,6 +168,21 @@ def check() -> None:
     print("  uv run python tg_post.py funding --dry-run   # сначала посмотреть текст")
 
 
+def stamp_published(report: str) -> None:
+    """Отмечает удачную публикацию, чтобы её отсутствие мог заметить сторож.
+
+    Без этой метки автопостинг отказывает молча: таймер отработал, отчёт не
+    собрался, канал молчит неделю — и узнать об этом можно только зайдя в него
+    глазами. Тот же приём, что с меткой резервной копии: пишет один процесс,
+    проверяет другой.
+    """
+    path = TICKS_ROOT.parent / "meta" / "last_post"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"{dt.datetime.now().isoformat(timespec='seconds')} {report}\n", encoding="utf-8"
+    )
+
+
 def publish(text: str, image: Path | None = None, *, dry_run: bool = False) -> None:
     """Публикует пост. Длинный текст уходит отдельным сообщением после фото.
 
@@ -539,13 +554,20 @@ def _num(value: int) -> str:
 
 
 def latest_session() -> tuple[str, dict[str, pl.DataFrame]]:
-    """Самая свежая дата, по которой есть собранные тики, и данные по ней."""
+    """Последняя завершённая сессия и собранные по ней тики.
+
+    Сегодняшний день исключается намеренно. Публикация идёт в 9:00 МСК, ровно
+    когда МОЕХ открывается, и файл за сегодня к этому моменту уже существует с
+    десятком сделок. Взяв его, отчёт назвал бы итогами сессии первую минуту
+    торгов — формально свежие данные, фактически мусор.
+    """
     if not TICKS_ROOT.exists():
         raise RuntimeError(f"нет собранных тиков: {TICKS_ROOT}")
 
-    files = sorted(TICKS_ROOT.glob("*/*.parquet"))
+    today = dt.date.today().isoformat()
+    files = sorted(p for p in TICKS_ROOT.glob("*/*.parquet") if p.stem < today)
     if not files:
-        raise RuntimeError("каталог тиков пуст — сначала нужен сбор")
+        raise RuntimeError("нет ни одной завершённой сессии в кэше тиков")
 
     day = files[-1].stem
     age = (dt.date.today() - dt.date.fromisoformat(day)).days
@@ -959,6 +981,8 @@ def daily(*, dry_run: bool = False) -> None:
             continue
         print(f"отчёт дня: {name}")
         publish(text, image, dry_run=dry_run)
+        if not dry_run:
+            stamp_published(name)
         return
 
     raise RuntimeError("ни один отчёт не собрался:\n  " + "\n  ".join(errors))

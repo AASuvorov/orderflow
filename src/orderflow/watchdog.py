@@ -32,6 +32,7 @@ MIN_RATIO = 0.25  # тиков меньше четверти медианы — 
 MIN_FREE_GB = 2.0
 TOKEN_FILE = Path.home() / ".config" / "telegram" / "orderflow"
 PULL_STAMP = DATA_ROOT / "meta" / "last_pull"
+POST_STAMP = DATA_ROOT / "meta" / "last_post"
 BACKUP_STALE_DAYS = 14  # ноутбук могут не включать в отпуске — раньше не тревожим
 
 
@@ -132,7 +133,34 @@ def check() -> tuple[list[str], list[str]]:
     else:
         report.append("копия на ноутбуке: выгрузок ещё не было")
 
+    problems.extend(check_posting(today, report))
+
     return problems, report
+
+
+def check_posting(today, report: list[str]) -> list[str]:
+    """Проверяет, что автопостинг в канал не замолчал.
+
+    Отказ здесь незаметнее, чем отказ сбора: данные продолжают копиться, диск не
+    кончается, ошибок в журнале нет — просто канал перестаёт обновляться. По
+    выходным пропуск ожидаем, публикация идёт только по будням.
+    """
+    if not POST_STAMP.exists():
+        # До первого автопоста тревожить не о чем: постинг может быть не настроен.
+        report.append("автопостинг: публикаций ещё не было")
+        return []
+
+    raw = POST_STAMP.read_text(encoding="utf-8").split()
+    last = datetime.fromisoformat(raw[0]).date()
+    name = raw[1] if len(raw) > 1 else "?"
+    age = (today - last).days
+
+    # В субботу свежайшим будет пятничный пост, в воскресенье — двухдневный.
+    allowed = 3 if today.weekday() in (5, 6) else 1
+    report.append(f"автопостинг: {last} ({name}), {age} дн. назад")
+    if age > allowed:
+        return [f"канал не обновлялся {age} дн., последний пост {last} ({name})"]
+    return []
 
 
 def pull_ok() -> None:
