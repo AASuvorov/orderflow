@@ -5,10 +5,17 @@
 проекта — значит, публикация должна быть автоматической, а ручным остаётся только
 решение, что именно проверять.
 
-Что здесь принципиально не делается: пересказ чужих новостей. Новостная лента —
-самая дешёвая вертикаль в Telegram (CPM в 4–6 раз ниже финансовой), и гонка за
-скорость проигрывается ботам, которые работают годами. Здесь публикуются только
-измерения, которых нет больше нигде.
+Что здесь принципиально не делается: перепечатка чужих новостей с Investing.com и
+подобных агрегаторов. Причина в первую очередь правовая — их условия
+использования запрещают копирование и распространение материалов, а канал на
+чужом контенте живёт до первой жалобы и не берётся рекламодателями. Плюс
+новостная лента — самая дешёвая вертикаль в Telegram (CPM в 4–6 раз ниже
+финансовой), и гонка за скорость проигрывается ботам, которые работают годами.
+
+Вопрос «что произошло вчера» при этом закрывается — отчётом morning, который
+строится по открытому ISS Московской биржи напрямую. Это первичный источник, а
+не чужая статья о нём: биржа публикует свои данные для свободного использования,
+и в них есть открытый интерес, которого в новостных сводках не бывает.
 
 Настройка один раз:
   1. @BotFather -> /newbot -> получить токен
@@ -53,6 +60,10 @@ import requests
 from funding import CACHE as FUNDING_CACHE
 from funding import FAPI, PERIODS_PER_YEAR, fetch_funding
 from mm_screen import MAKER_BPS, screen
+from moex import CACHE as MOEX_CACHE
+from moex import ISS
+from moex import _block as _iss_block
+from moex import _get as _iss_get
 from moex_feasibility import cost_bps
 # Каталог тиков берём у сборщика, а не собираем свой путь: он единственный знает,
 # куда реально пишет, и уважает ORDERFLOW_DATA.
@@ -650,8 +661,265 @@ def session_report() -> tuple[str, Path]:
 
 
 # --------------------------------------------------------------------------- #
+# Отчёт 5: утренний брифинг по итогам сессии
+# --------------------------------------------------------------------------- #
+
+MARKET_HISTORY = f"{ISS}/history/engines/futures/markets/forts/securities.json"
+
+# Сколько сессий нужно для сравнения объёма с нормой.
+BRIEF_SESSIONS = 11
+# Минимальный оборот, чтобы актив попал в брифинг, млн рублей за сессию.
+MIN_TURNOVER_MRUB = 300.0
+# Минимальный открытый интерес в контрактах: на малой базе проценты бессмысленны.
+MIN_OPEN_INTEREST = 10_000
+# Ниже этого движения цену считаем стоящей на месте, %. Иначе шум в сотых долях
+# процента описывался бы как падение или рост, чего в данных нет.
+FLAT_BAND_PCT = 0.3
+
+
+def market_day(date: str) -> pl.DataFrame:
+    """Итоги торгов по всем фьючерсам за дату, с кэшем на диске.
+
+    История в ISS неизменна, поэтому кэшируется навсегда: иначе каждый утренний
+    запуск заново выкачивал бы десяток страниц на каждую из одиннадцати сессий.
+    Возвращает пустой фрейм для выходных и праздников — это нормальный ответ, а
+    не ошибка, и вызывающая сторона отличает их по height.
+    """
+    MOEX_CACHE.mkdir(parents=True, exist_ok=True)
+    path = MOEX_CACHE / f"forts_{date}.parquet"
+    if path.exists():
+        return pl.read_parquet(path)
+
+    frames, start = [], 0
+    while True:
+        chunk = _iss_block(
+            _iss_get(MARKET_HISTORY, date=date, start=start, **{"iss.only": "history"}),
+            "history",
+        )
+        if chunk.is_empty():
+            break
+        frames.append(chunk)
+        start += 100
+        if start > 3000:
+            break
+
+    schema = {
+        "SECID": pl.Utf8, "ASSETCODE": pl.Utf8, "CLOSE": pl.Float64,
+        "VALUE": pl.Float64, "VOLUME": pl.Int64, "OPENPOSITION": pl.Int64,
+    }
+    if not frames:
+        df = pl.DataFrame(schema=schema)
+    else:
+        df = (
+            pl.concat(frames, how="vertical_relaxed")
+            .select(
+                pl.col("SECID"),
+                pl.col("ASSETCODE"),
+                pl.col("CLOSE").cast(pl.Float64),
+                pl.col("VALUE").cast(pl.Float64),
+                pl.col("VOLUME").cast(pl.Int64),
+                pl.col("OPENPOSITION").cast(pl.Int64),
+            )
+            .drop_nulls("CLOSE")
+        )
+
+    df.write_parquet(path, compression="zstd")
+    return df
+
+
+def trading_sessions(count: int = BRIEF_SESSIONS) -> list[tuple[str, pl.DataFrame]]:
+    """Последние торговые сессии, свежая последней. Выходные отсеиваются данными.
+
+    Календарь МОЕХ с праздниками не зашивается в код: пустой ответ ISS сам
+    отвечает на вопрос, торговали в этот день или нет.
+    """
+    sessions: list[tuple[str, pl.DataFrame]] = []
+    day = dt.date.today()
+    # Запас на новогодние каникулы — самый долгий перерыв в календаре МОЕХ.
+    for _ in range(count + 20):
+        if len(sessions) >= count:
+            break
+        df = market_day(day.isoformat())
+        if not df.is_empty():
+            sessions.append((day.isoformat(), df))
+        day -= dt.timedelta(days=1)
+
+    if len(sessions) < 2:
+        raise RuntimeError("ISS не отдал даже двух сессий для сравнения")
+    return list(reversed(sessions))
+
+
+def brief_frame(sessions: list[tuple[str, pl.DataFrame]]) -> pl.DataFrame:
+    """Свод по базовому активу: цена ближней серии, суммарный интерес и оборот.
+
+    Открытый интерес суммируется по всем сериям одного актива. На ближнем
+    контракте перед экспирацией он падает почти до нуля — это перекладка в
+    следующую серию, а не уход денег, и по одной серии брифинг сообщал бы
+    массовый выход из позиций каждый квартал.
+    """
+    rows: list[dict] = []
+    for date, df in sessions:
+        # Цену берём у самой оборотистой серии: она и есть та, по которой актив
+        # котируют, тогда как дальние серии могут стоять без сделок.
+        front = df.sort("VALUE", descending=True).unique("ASSETCODE", keep="first")
+        agg = df.group_by("ASSETCODE").agg(
+            pl.col("OPENPOSITION").sum().alias("интерес"),
+            (pl.col("VALUE").sum() / 1e6).alias("оборот_млн"),
+        )
+        rows.append(
+            front.select("ASSETCODE", pl.col("CLOSE").alias("цена"), "SECID")
+            .join(agg, on="ASSETCODE")
+            .with_columns(pl.lit(date).alias("дата"))
+        )
+
+    return pl.concat(rows).sort("дата")
+
+
+def brief_changes(frame: pl.DataFrame) -> pl.DataFrame:
+    """Изменения за последнюю сессию против предыдущей и против нормы объёма."""
+    dates = frame["дата"].unique().sort().to_list()
+    last, prev = dates[-1], dates[-2]
+
+    cur = frame.filter(pl.col("дата") == last)
+    old = frame.filter(pl.col("дата") == prev).select(
+        "ASSETCODE",
+        pl.col("цена").alias("цена_пред"),
+        pl.col("интерес").alias("интерес_пред"),
+    )
+    # Норма считается по сессиям до последней, иначе аномалия размывала бы сама себя.
+    norm = (
+        frame.filter(pl.col("дата") != last)
+        .group_by("ASSETCODE")
+        .agg(pl.col("оборот_млн").median().alias("оборот_норма"))
+    )
+
+    return (
+        cur.join(old, on="ASSETCODE")
+        .join(norm, on="ASSETCODE")
+        .filter(
+            (pl.col("оборот_млн") >= MIN_TURNOVER_MRUB)
+            & (pl.col("цена_пред") > 0)
+            # Норма тоже должна быть содержательной. Иначе только что запущенный
+            # контракт с почти нулевой медианой всегда выигрывает в «разы от нормы»
+            # и в процентах прироста интереса: это низкая база, а не событие.
+            & (pl.col("оборот_норма") >= MIN_TURNOVER_MRUB)
+            & (pl.col("интерес_пред") >= MIN_OPEN_INTEREST)
+        )
+        .with_columns(
+            ((pl.col("цена") / pl.col("цена_пред") - 1) * 100).alias("цена_%"),
+            ((pl.col("интерес") / pl.col("интерес_пред") - 1) * 100).alias("интерес_%"),
+            (pl.col("оборот_млн") / pl.col("оборот_норма")).alias("оборот_к_норме"),
+        )
+    )
+
+
+def brief_chart(df: pl.DataFrame, date: str) -> Path:
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    path = OUT_DIR / "morning_brief.png"
+
+    top = df.sort(pl.col("цена_%").abs(), descending=True).head(10)
+    names = top["ASSETCODE"].to_list()
+    price = top["цена_%"].to_numpy()
+    interest = top["интерес_%"].to_numpy()
+
+    y = np.arange(len(names))
+    # Две панели со своими шкалами: интерес меняется на десятки процентов, цена на
+    # единицы, и на общей оси ценовые столбцы вырождаются в незаметные полоски.
+    fig, (left, right) = plt.subplots(
+        1, 2, figsize=(11, 0.55 * len(names) + 2.6), sharey=True
+    )
+
+    for ax, values, title, color in (
+        (left, price, "цена ближней серии", "tab:blue"),
+        (right, interest, "открытый интерес по всем сериям", "tab:gray"),
+    ):
+        ax.barh(y, values, color=color)
+        ax.axvline(0, color="black", lw=1)
+        span = max(np.abs(values)) * 1.35 or 1.0
+        ax.set_xlim(-span, span)
+        for i, v in enumerate(values):
+            ax.text(
+                v + span * 0.03 * (1 if v >= 0 else -1), i, f"{v:+.1f}%",
+                va="center", ha="left" if v >= 0 else "right", fontsize=9,
+            )
+        ax.set_title(title, fontsize=11)
+        ax.set_xlabel("изменение за сессию, %")
+        ax.grid(axis="x", alpha=0.3)
+
+    left.set_yticks(y)
+    left.set_yticklabels(names)
+    left.invert_yaxis()
+    fig.suptitle(
+        f"Итоги сессии МОЕХ {date}\n"
+        "интерес просуммирован по всем сериям, чтобы перекладка не читалась как выход",
+        fontsize=12,
+    )
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return path
+
+
+def morning_report() -> tuple[str, Path]:
+    sessions = trading_sessions()
+    frame = brief_frame(sessions)
+    df = brief_changes(frame)
+    if df.is_empty():
+        raise RuntimeError("после фильтра по оборотам не осталось активов")
+
+    date = sessions[-1][0]
+
+    movers = df.sort(pl.col("цена_%").abs(), descending=True).head(3)
+    movers_txt = "\n".join(
+        f"<b>{html.escape(r['ASSETCODE'])}</b> {r['цена_%']:+.2f}%, "
+        f"интерес {r['интерес_%']:+.1f}%"
+        for r in movers.iter_rows(named=True)
+    )
+
+    inflow = df.sort("интерес_%", descending=True).head(1).row(0, named=True)
+    outflow = df.sort("интерес_%").head(1).row(0, named=True)
+    busiest = df.sort("оборот_к_норме", descending=True).head(1).row(0, named=True)
+
+    # Рост цены вместе с ростом интереса означает приход новых денег, а рост цены
+    # при падении интереса — закрытие шортов. Различие в новостях не встречается,
+    # хотя данные для него публикует сама биржа.
+    move = inflow["цена_%"]
+    if abs(move) < FLAT_BAND_PCT:
+        inflow_note = "Цена при этом стоит на месте — позиции копятся тихо"
+    elif move > 0:
+        inflow_note = "Цена растёт вместе с интересом — заходят новые деньги, "\
+                      "а не закрываются шорты"
+    else:
+        inflow_note = "Интерес растёт на падении цены — набирают шорт или ловят дно"
+
+    text = (
+        f"<b>Итоги сессии МОЕХ {html.escape(date)}</b>\n\n"
+        "Считаю сам по данным биржи: цена ближней серии, открытый интерес по всем "
+        "сериям и оборот против нормы за десять сессий.\n\n"
+        "<b>Сильнее всего сдвинулись:</b>\n"
+        + movers_txt
+        + f"\n\n<b>Деньги пришли в {html.escape(inflow['ASSETCODE'])}</b>: интерес "
+        f"{inflow['интерес_%']:+.1f}% при цене {move:+.2f}%. {inflow_note}.\n\n"
+        f"<b>Ушли из {html.escape(outflow['ASSETCODE'])}</b>: интерес "
+        f"{outflow['интерес_%']:+.1f}%.\n\n"
+        f"<b>Оборот выше нормы</b> у {html.escape(busiest['ASSETCODE'])}: "
+        f"{busiest['оборот_к_норме']:.1f}× от медианы, "
+        f"{_num(round(busiest['оборот_млн']))} млн рублей."
+        + "\n\nПочему интерес суммируется по сериям: на ближнем контракте перед "
+        "экспирацией он падает почти до нуля, но это перекладка в следующую серию, "
+        "а не выход из позиций. По одной серии брифинг сообщал бы массовый уход "
+        "денег каждый квартал.\n\n"
+        "Источник — открытый ISS Московской биржи, без посредников. "
+        "Код: github.com/AASuvorov/orderflow\n\n"
+        "#сессия@tradingnadannyh"
+    )
+    return text, brief_chart(df, date)
+
+
+# --------------------------------------------------------------------------- #
 
 REPORTS = {
+    "morning": morning_report,
     "funding": funding_report,
     "costs": costs_report,
     "spread": spread_report,
@@ -660,7 +928,11 @@ REPORTS = {
 
 # Утренняя рубрика по дням недели. Понедельник = 0.
 # Выходные пропускаются: МОЕХ закрыта, а дочитывание в субботу и воскресенье ниже.
-SCHEDULE = {0: "costs", 1: "session", 2: "funding", 3: "spread", 4: "session"}
+#
+# Брифинг стоит трижды в неделю, потому что он единственный отвечает на вопрос
+# «что произошло вчера» — тот самый, с которым читатель открывает канал утром.
+# Остальные отчёты отвечают на вопрос «как устроен рынок» и не устаревают за день.
+SCHEDULE = {0: "morning", 1: "session", 2: "morning", 3: "spread", 4: "morning"}
 
 
 def daily(*, dry_run: bool = False) -> None:
