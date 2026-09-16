@@ -64,6 +64,7 @@ from moex import CACHE as MOEX_CACHE
 from moex import ISS
 from moex import _block as _iss_block
 from moex import _get as _iss_get
+from moex import active_series
 from moex_feasibility import cost_bps
 # Каталог тиков берём у сборщика, а не собираем свой путь: он единственный знает,
 # куда реально пишет, и уважает ORDERFLOW_DATA.
@@ -88,8 +89,11 @@ MESSAGE_LIMIT = 4096
 OUT_DIR = TICKS_ROOT.parent / "tg"
 
 FUNDING_SYMBOLS = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
-# Контракты отобраны по издержкам круга, тот же список, что в deploy/install.sh.
-MOEX_CONTRACTS = ("EuU6", "SiU6", "GDU6", "EDU6", "MMU6", "GNU6", "MXU6", "BRV6", "CRU6")
+# Базовые активы, отобранные по издержкам круга. Раньше здесь стоял список
+# конкретных серий (SiU6, EuU6, ...), и это была тихая мина: серии истекают, а ISS
+# продолжает отдавать по ним спецификацию, поэтому отчёт не падал бы, а публиковал
+# издержки уже не торгуемых контрактов. Серия теперь выбирается на каждом запуске.
+MOEX_ASSETS = ("Eu", "Si", "GOLD", "ED", "MXI", "GOLDM", "MIX", "BR", "CNY")
 
 # Долларовая безрисковая ставка для сравнения с carry, % годовых.
 # Значение из funding.py; при заметном изменении ставок обновить здесь.
@@ -413,7 +417,7 @@ def costs_chart(rows: list[dict]) -> Path:
 
 def costs_report() -> tuple[str, Path]:
     rows: list[dict] = []
-    for secid in MOEX_CONTRACTS:
+    for secid in active_series(MOEX_ASSETS).values():
         c = cost_bps(secid)
         if c:
             rows.append(c)
@@ -1148,6 +1152,31 @@ def daily(*, dry_run: bool = False) -> None:
     if weekday not in SCHEDULE:
         print(f"выходной (день {weekday}) — публикации нет")
         return
+
+    # Событие вытесняет обычный отчёт, а не добавляется к нему. Два поста в день
+    # размывают охват, а охват — это то, по чему покупают рекламу; регулярный
+    # замер при этом никуда не денется, он выйдет в свой день на следующей неделе.
+    # Импорт отложенный: tg_events берёт отсюда отправку, и на уровне модуля вышел
+    # бы круговой импорт.
+    from tg_events import load_state, pending, save_state
+
+    try:
+        state = load_state()
+        event = pending(state)
+        if event:
+            text, image = event
+            publish(text, image, dry_run=dry_run)
+            if not dry_run:
+                stamp_published("event")
+                save_state(state)
+            return
+        if not dry_run:
+            # Снимки для сравнения обновляются и когда объявлять нечего: иначе
+            # первое же изменение сравнивалось бы с состоянием месячной давности.
+            save_state(state)
+    except Exception as exc:
+        # Отказ проверки событий не имеет права отменить обычную публикацию.
+        print(f"проверка событий не удалась ({exc}), продолжаю с отчётом дня")
 
     order = [SCHEDULE[weekday]] + [n for n in REPORTS if n != SCHEDULE[weekday]]
     errors: list[str] = []

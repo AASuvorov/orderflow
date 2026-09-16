@@ -89,6 +89,48 @@ def liquid_futures(date: str, min_trades: int = 500) -> pl.DataFrame:
     )
 
 
+# За сколько дней до последнего торга уходим в следующую серию. Ноль здесь был бы
+# ошибкой: к последним дням ликвидность уже переехала в дальнюю серию, спред на
+# умирающем контракте расширяется, и замер издержек по нему описывает контракт,
+# который никто не станет торговать.
+ROLL_BUFFER_DAYS = 2
+
+
+def active_series(assets: tuple[str, ...] | list[str]) -> dict[str, str]:
+    """Ближняя живая серия для каждого базового актива: {'Si': 'SiZ6', ...}.
+
+    Нужна потому, что серии умирают. Список контрактов, вписанный в код руками,
+    после экспирации превращается в список мёртвых тикеров — и это отказ худшего
+    вида: ISS продолжает отдавать по ним спецификацию с последней расчётной ценой,
+    поэтому отчёт не падает, а тихо публикует издержки контракта, которого больше
+    нет в торгах. Заметить это можно только вручную сверив тикеры с календарём.
+
+    Один запрос на все 600+ контрактов дешевле, чем запрос на каждый актив.
+    """
+    import datetime as dt
+
+    df = _block(_get(f"{FORTS}/securities.json", **{"iss.only": "securities"}),
+                "securities")
+    if df.is_empty():
+        raise RuntimeError("ISS не вернула список контрактов")
+
+    cutoff = (dt.date.today() + dt.timedelta(days=ROLL_BUFFER_DAYS)).isoformat()
+    live = (
+        df.select("SECID", "ASSETCODE", "SHORTNAME", "LASTTRADEDATE")
+        .filter(pl.col("ASSETCODE").is_in(list(assets)))
+        .filter(pl.col("LASTTRADEDATE") > cutoff)
+        .sort(["ASSETCODE", "LASTTRADEDATE"])
+        .group_by("ASSETCODE", maintain_order=True)
+        .first()
+    )
+    found = {r["ASSETCODE"]: r["SECID"] for r in live.iter_rows(named=True)}
+    missing = [a for a in assets if a not in found]
+    if missing:
+        # Молчать нельзя: пропавший актив вырезал бы себя из отчёта незаметно.
+        print(f"нет живой серии: {', '.join(missing)}")
+    return found
+
+
 def spec(secid: str) -> dict:
     """Шаг цены, стоимость шага и биржевые сборы в рублях за контракт.
 
