@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Трейдинг на данных — Замеры вместо прогнозов: фьючерсы МОЕХ и крипта в цифрах</title>
+<meta name="description" content="Замеры вместо прогнозов: фьючерсы МОЕХ и крипта в цифрах">
+<meta property="og:title" content="Трейдинг на данных — Замеры вместо прогнозов: фьючерсы МОЕХ и крипта в цифрах">
+<meta property="og:description" content="Замеры вместо прогнозов: фьючерсы МОЕХ и крипта в цифрах">
+<meta property="og:type" content="website">
+<style>
+:root{--bg:#0F1B2D;--card:#16243a;--ink:#E8EEF7;--dim:#8A99AD;--teal:#2ED3C6;--warn:#FF6B57}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:17px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+a{color:var(--teal);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:760px;margin:0 auto;padding:0 20px 80px}
+header{padding:56px 0 28px;border-bottom:1px solid #24344f;margin-bottom:32px}
+h1{margin:0 0 8px;font-size:34px;letter-spacing:-.4px}
+h1 a{color:var(--ink)}
+.tagline{color:var(--dim);margin:0 0 20px}
+.links a{margin-right:18px;font-weight:600}
+.board{background:var(--card);border:1px solid #24344f;border-radius:12px;
+  padding:18px 20px;margin:26px 0 0}
+.board h2{margin:0 0 12px;font-size:14px;text-transform:uppercase;
+  letter-spacing:1.2px;color:var(--dim);font-weight:700}
+.board .row{display:flex;justify-content:space-between;gap:12px;padding:5px 0;
+  border-bottom:1px solid #1e2c44;font-variant-numeric:tabular-nums}
+.board .row:last-child{border-bottom:0}
+.board .row span:last-child{font-weight:700}
+.up{color:var(--teal)}.down{color:var(--warn)}
+article{background:var(--card);border:1px solid #24344f;border-radius:12px;
+  padding:22px 24px;margin-bottom:22px}
+article h2{margin:0 0 4px;font-size:21px;line-height:1.35}
+article h2 a{color:var(--ink)}
+time{color:var(--dim);font-size:14px}
+article img{width:100%;height:auto;border-radius:8px;margin:16px 0;background:#fff}
+.body{margin-top:14px}
+.body b{color:#fff}
+.tags{margin-top:14px}
+.tags span{display:inline-block;background:#1e2c44;color:var(--dim);
+  border-radius:999px;padding:3px 11px;font-size:13px;margin:0 6px 6px 0}
+footer{color:var(--dim);font-size:14px;border-top:1px solid #24344f;
+  margin-top:40px;padding-top:22px}
+.empty{color:var(--dim);text-align:center;padding:60px 0}
+</style>
+</head>
+<body><div class="wrap">
+<header>
+<h1><a href="/orderflow/">Трейдинг на данных</a></h1>
+<p class="tagline">Замеры вместо прогнозов: фьючерсы МОЕХ и крипта в цифрах</p>
+<p class="links"><a href="https://t.me/tradingnadannyh">Канал в Telegram</a><a href="https://github.com/AASuvorov/orderflow">Код и данные</a></p>
+<div class="board"><h2>Живые цифры</h2><div class="row"><span>Ключевая ставка ЦБ</span><span class="">14.00%</span></div>
+<div class="row"><span>Доллар ЦБ</span><span class="">84.24 ₽</span></div>
+<div class="row"><span>Юань ЦБ</span><span class="">12.55 ₽</span></div>
+<div class="row"><span>BTC · фандинг +4.9% годовых</span><span class="down">75 951.40 $ (-1.4%)</span></div>
+<div class="row"><span>ETH · фандинг -3.5% годовых</span><span class="down">2 405.85 $ (-3.1%)</span></div>
+<div class="row"><span>SOL · фандинг -2.0% годовых</span><span class="down">97.51 $ (-3.5%)</span></div></div>
+</header>
+<article>
+<h2><a href="20260916-155623.html">Итоги недели в цифрах</a></h2>
+<time>16 сентября 2026, 15:56</time>
+<img src="img/20260916-155623.png" alt="Итоги недели в цифрах" loading="lazy">
+<div class="body"><p><b>Si: открытый интерес +5.1%</b> — больше всех за неделю среди ликвидных активов МОЕХ. Обороты резче всех выросли в BR: +77.9%.</p>
+<p>Не пересказ событий, а замеры: что изменилось за неделю там, где я меряю сам.</p>
+<p><b>Фандинг перпетуалов, неделя к предыдущей:</b><br><b>BTC</b>: +6.1% годовых (вырос на 1.1 п.п.)<br><b>ETH</b>: +1.4% годовых (упал на 4.0 п.п.)<br><b>SOL</b>: +0.8% годовых (упал на 2.1 п.п.)</p>
+<p><b>Деньги на МОЕХ.</b> Сильнее всего открытый интерес сократился у MIX: -11.1%. Полная картина по десяти самым оборотистым активам — на графике.</p>
+<p>Открытый интерес — это состояние, а не поток, поэтому он усредняется по сессиям, а не суммируется, и берётся по всем сериям актива: на ближней перед экспирацией он падает из-за перекладки, а не из-за выхода из позиций.</p></div>
+<div class="tags"><span>#МОЕХ</span><span>#фандинг</span><span>#итогинедели</span></div>
+</article>
+<article>
+<h2><a href="20260916-155618.html">Сколько стоит один круг на фьючерсах МОЕХ</a></h2>
+<time>16 сентября 2026, 15:56</time>
+<img src="img/20260916-155618.png" alt="Сколько стоит один круг на фьючерсах МОЕХ" loading="lazy">
+<div class="body"><p><b>Разброс 4.8× между EuZ6 и CRZ6</b>: от 0.54 до 2.58 базисного пункта за вход и выход.</p>
+<p>Полный круг — это спред плюс сборы биржи и брокера с двух сторон. Именно эта цифра задаёт минимальную точность, при которой торговля вообще не убыточна.</p>
+<p><b>EuZ6</b> — 0.54 б.п. (спред 0.10 + сборы 0.43)<br><b>SiZ6</b> — 0.58 б.п. (спред 0.12 + сборы 0.47)<br><b>GDZ6</b> — 0.94 б.п. (спред 0.23 + сборы 0.71)<br><b>EDZ6</b> — 1.31 б.п. (спред 0.87 + сборы 0.44)<br><b>MMZ6</b> — 1.38 б.п. (спред 0.21 + сборы 1.17)<br><b>GNZ6</b> — 1.44 б.п. (спред 0.23 + сборы 1.21)<br><b>MXZ6</b> — 1.47 б.п. (спред 1.05 + сборы 0.41)<br><b>BRV6</b> — 1.80 б.п. (спред 0.93 + сборы 0.88)<br><b>CRZ6</b> — 2.58 б.п. (спред 0.78 + сборы 1.80)</p>
+<p>На дорогом контракте та же стратегия требует заметно более высокой точности при том же движении цены — поэтому инструмент выбирают по издержкам, а не по оборотам.</p>
+<p>Замер автоматический, по текущим спецификациям МОЕХ. #МОЕХ #фьючерсы #издержки</p></div>
+
+</article>
+<article>
+<h2><a href="20260916-155609.html">Фандинг перпетуалов: сколько платит нейтральная позиция</a></h2>
+<time>16 сентября 2026, 15:56</time>
+<img src="img/20260916-155609.png" alt="Фандинг перпетуалов: сколько платит нейтральная позиция" loading="lazy">
+<div class="body"><p><b>Лучший инструмент — BTC, +7.4% годовых</b> за последние 30 дней. Долларовая безрисковая ставка при этом около 4%.</p>
+<p>Схема без предсказания направления: спот в лонг, вечный фьючерс в шорт. Доход — фандинг, который лонги платят шортам каждые 8 часов.</p>
+<p><b>BTC</b>: +7.4% годовых за 30 дней (за год +3.3%), отрицательных выплат 1%<br><b>ETH</b>: +5.3% годовых за 30 дней (за год +2.3%), отрицательных выплат 10%<br><b>SOL</b>: +3.4% годовых за 30 дней (за год -1.9%), отрицательных выплат 36%</p>
+<p>Лучший инструмент даёт +7.4% годовых — выше долларовой безрисковой (~4%). Премия существует, но она плата за риск биржи и риск ликвидации фьючерсной ноги, а не бесплатный доход.</p>
+<p>Считается автоматически из истории выплат Binance с 2019 года. #фандинг #Binance #крипта</p></div>
+
+</article>
+<article>
+<h2><a href="20260916-155604.html">Итоги сессии МОЕХ 2026-09-14</a></h2>
+<time>16 сентября 2026, 15:56</time>
+<img src="img/20260916-155604.png" alt="Итоги сессии МОЕХ 2026-09-14" loading="lazy">
+<div class="body"><p><b>SMLT: интерес +44.1% при цене -6.36%.</b> Интерес растёт на падении цены — набирают шорт или ловят дно.</p>
+<p>Считаю сам по данным биржи: цена ближней серии, открытый интерес по всем сериям и оборот против нормы за десять сессий.</p>
+<p><b>Сильнее всего сдвинулись:</b><br><b>OZON</b> +6.60%, интерес +2.4%<br><b>SMLT</b> -6.36%, интерес +44.1%<br><b>ROSN</b> +6.30%, интерес +10.0%</p>
+<p><b>Ушли из COPPER</b>: интерес -27.9%.</p>
+<p><b>Оборот выше нормы</b> у ROSN: 4.9× от медианы, 3 782 млн рублей.</p>
+<p>Почему интерес суммируется по сериям: на ближнем контракте перед экспирацией он падает почти до нуля, но это перекладка в следующую серию, а не выход из позиций. По одной серии брифинг сообщал бы массовый уход денег каждый квартал.</p>
+<p>Источник — открытый ISS Московской биржи, без посредников. #МОЕХ #фьючерсы #итогисессии</p></div>
+
+</article>
+<article>
+<h2><a href="20260916-155604.html">Сессия МОЕХ 2026-09-15: куда давил агрессор</a></h2>
+<time>16 сентября 2026, 15:56</time>
+<img src="img/20260916-155604.png" alt="Сессия МОЕХ 2026-09-15: куда давил агрессор" loading="lazy">
+<div class="body"><p><b>SiZ6: перевес агрессивных продаж на 30.1%</b> от объёма за сессию, пик в 13:00 МСК — 55.5%.</p>
+<p>Считаю по своим тикам со стороной инициатора сделки — той, кто ударил по цене, а не просто стоял в стакане. За сессию 942 451 сделок по 8 контрактам.</p>
+<p>Весь список, % от объёма:</p>
+<p><b>SiZ6</b>: -30.1% (сделок 189 042)<br><b>SiU6</b>: +13.0% (сделок 317 679)<br><b>MXZ6</b>: -8.3% (сделок 50 736)<br><b>MXU6</b>: -7.4% (сделок 114 207)<br><b>MMZ6</b>: +5.4% (сделок 57 821)<br><b>BRX6</b>: -3.3% (сделок 16 498)</p>
+<p>Важная оговорка, чтобы это не читалось как сигнал: односторонний поток сам по себе направление не предсказывает. Я это замерял — знак эффекта зависит от режима рынка, а не от перекоса потока.</p></div>
+<div class="tags"><span>#МОЕХ</span><span>#фьючерсы</span><span>#объёмы</span></div>
+</article>
+<footer>
+<p>Все цифры считаются автоматически из первичных источников: открытый ISS
+Московской биржи, API Binance, сервисы Банка России. Пересказа новостей здесь нет.</p>
+<p>Это не инвестиционная рекомендация и не предложение совершать сделки.
+Замер описывает то, что уже произошло, и ничего не утверждает о будущем.</p>
+</footer>
+</div></body></html>
