@@ -4,53 +4,108 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Британия, инфляция, год к году: 3.1% против прогноза 2.5% — Трейдинг на данных</title>
-<meta name="description" content="Замеры вместо прогнозов: фьючерсы МОЕХ и крипта в цифрах">
+<meta name="description" content="Британия, инфляция, год к году: 3.1% против прогноза 2.5%">
+<meta name="theme-color" content="#0B1524">
+<link rel="icon" href="avatar.png">
 <meta property="og:title" content="Британия, инфляция, год к году: 3.1% против прогноза 2.5% — Трейдинг на данных">
-<meta property="og:description" content="Замеры вместо прогнозов: фьючерсы МОЕХ и крипта в цифрах">
+<meta property="og:description" content="Британия, инфляция, год к году: 3.1% против прогноза 2.5%">
+<meta property="og:image" content="avatar.png">
 <meta property="og:type" content="website">
+<meta name="twitter:card" content="summary">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap">
 <style>
-:root{--bg:#0F1B2D;--card:#16243a;--ink:#E8EEF7;--dim:#8A99AD;--teal:#2ED3C6;--warn:#FF6B57}
+:root{
+  --bg:#0B1524;--bg2:#0F1B2D;--card:#141F33;--card2:#18243B;
+  --line:#22314C;--ink:#EDF2FA;--dim:#8798AF;--teal:#2ED3C6;--warn:#FF6B57;
+  --radius:16px;--maxw:820px
+}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);
-  font:17px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;
+  font:400 17px/1.7 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,
+  "Helvetica Neue",Arial,sans-serif;
+  background-image:radial-gradient(1200px 600px at 50% -240px,#16305180,transparent)}
+.num,time,.stat b,.board b{font-variant-numeric:tabular-nums}
 a{color:var(--teal);text-decoration:none}
-a:hover{text-decoration:underline}
-.wrap{max-width:760px;margin:0 auto;padding:0 20px 80px}
-header{padding:56px 0 28px;border-bottom:1px solid #24344f;margin-bottom:32px}
-h1{margin:0 0 8px;font-size:34px;letter-spacing:-.4px}
+a:hover{text-decoration:underline;text-underline-offset:3px}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 22px 96px}
+
+header{padding:56px 0 32px}
+.brand{display:flex;align-items:center;gap:14px;margin-bottom:18px}
+.brand img{width:52px;height:52px;border-radius:14px;box-shadow:0 6px 24px #0006}
+h1{margin:0;font-size:clamp(28px,5vw,40px);line-height:1.1;letter-spacing:-.9px;
+  font-weight:700}
 h1 a{color:var(--ink)}
-.tagline{color:var(--dim);margin:0 0 20px}
-.links a{margin-right:18px;font-weight:600}
-.board{background:var(--card);border:1px solid #24344f;border-radius:12px;
-  padding:18px 20px;margin:26px 0 0}
-.board h2{margin:0 0 12px;font-size:14px;text-transform:uppercase;
-  letter-spacing:1.2px;color:var(--dim);font-weight:700}
-.board .row{display:flex;justify-content:space-between;gap:12px;padding:5px 0;
-  border-bottom:1px solid #1e2c44;font-variant-numeric:tabular-nums}
-.board .row:last-child{border-bottom:0}
-.board .row span:last-child{font-weight:700}
+.tagline{color:var(--dim);margin:0 0 22px;font-size:18px;max-width:56ch}
+.links{display:flex;flex-wrap:wrap;gap:10px;margin:0}
+.links a{background:var(--card);border:1px solid var(--line);border-radius:999px;
+  padding:8px 16px;font-size:15px;font-weight:600;color:var(--ink);
+  transition:border-color .15s,transform .15s}
+.links a:hover{text-decoration:none;border-color:var(--teal);transform:translateY(-1px)}
+.links a.accent{background:linear-gradient(135deg,#2ED3C6,#1FA9C2);color:#06131f;
+  border-color:transparent}
+
+.board{margin:34px 0 8px}
+/* Подпись раздела отдельным классом, а не правилом для h2 внутри секции: такое
+   правило перебивало заголовки самих замеров — они набирались капсом в размер
+   подписи, потому что класс в селекторе весит больше, чем имя тега. */
+.eyebrow{margin:0 0 14px;font-size:13px;text-transform:uppercase;
+  letter-spacing:1.6px;color:var(--dim);font-weight:700}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(168px,1fr))}
+.stat{background:linear-gradient(180deg,var(--card2),var(--card));
+  border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;
+  display:flex;flex-direction:column;gap:5px}
+.stat span{color:var(--dim);font-size:13px}
+/* Значение и изменение не переносятся внутри себя: без этого знак валюты и минус
+   отрывались на следующую строку и повисали там отдельно от числа. */
+.stat b,.stat i{white-space:nowrap}
+.stat b{font-size:24px;font-weight:700;letter-spacing:-.5px}
+.stat i{font-style:normal;font-size:13px;font-weight:600}
+.stat i.note{color:var(--dim);font-weight:400;white-space:normal}
+.stat b{margin-top:auto}
 .up{color:var(--teal)}.down{color:var(--warn)}
-article{background:var(--card);border:1px solid #24344f;border-radius:12px;
-  padding:22px 24px;margin-bottom:22px}
-article h2{margin:0 0 4px;font-size:21px;line-height:1.35}
+
+.section{margin-top:44px;padding-top:8px}
+article{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  padding:26px 28px;margin-bottom:20px;transition:border-color .15s,transform .15s}
+.feed article:hover{border-color:#2f4568;transform:translateY(-2px)}
+article h2{margin:0 0 6px;font-size:23px;line-height:1.3;letter-spacing:-.4px;
+  font-weight:700}
 article h2 a{color:var(--ink)}
+article h2 a:hover{color:var(--teal);text-decoration:none}
 time{color:var(--dim);font-size:14px}
-article img{width:100%;height:auto;border-radius:8px;margin:16px 0;background:#fff}
-.body{margin-top:14px}
-.body b{color:#fff}
-.tags{margin-top:14px}
-.tags span{display:inline-block;background:#1e2c44;color:var(--dim);
-  border-radius:999px;padding:3px 11px;font-size:13px;margin:0 6px 6px 0}
-footer{color:var(--dim);font-size:14px;border-top:1px solid #24344f;
-  margin-top:40px;padding-top:22px}
-.empty{color:var(--dim);text-align:center;padding:60px 0}
+article img{width:100%;height:auto;border-radius:10px;margin:18px 0 4px;
+  background:#fff;border:1px solid var(--line)}
+.body{margin-top:16px}
+.body p{margin:0 0 15px}
+.body p:last-child{margin-bottom:0}
+.body b{color:#fff;font-weight:600}
+.excerpt{color:#C7D3E4;margin-top:14px}
+.more{display:inline-block;margin-top:14px;font-weight:600}
+.tags{margin-top:18px;display:flex;flex-wrap:wrap;gap:7px}
+.tags span{background:#1B2942;color:#9FB0C7;border:1px solid var(--line);
+  border-radius:999px;padding:4px 12px;font-size:13px}
+.nav{display:flex;justify-content:space-between;gap:14px;margin-top:26px;
+  font-weight:600}
+footer{color:var(--dim);font-size:14px;border-top:1px solid var(--line);
+  margin-top:56px;padding-top:24px}
+footer p{margin:0 0 12px}
+.empty{color:var(--dim);text-align:center;padding:72px 0}
+@media(max-width:600px){
+  article{padding:20px 18px}
+  body{font-size:16px}
+}
 </style>
 </head>
 <body><div class="wrap">
 <header>
-<h1><a href="/orderflow/">Трейдинг на данных</a></h1>
+<div class="brand">
+<a href="./"><img src="avatar.png" alt="Трейдинг на данных" width="52" height="52"></a>
+<h1><a href="./">Трейдинг на данных</a></h1>
+</div>
 <p class="tagline">Замеры вместо прогнозов: фьючерсы МОЕХ и крипта в цифрах</p>
-<p class="links"><a href="https://t.me/tradingnadannyh">Канал в Telegram</a><a href="https://github.com/AASuvorov/orderflow">Код и данные</a></p>
+<p class="links"><a class="accent" href="https://t.me/tradingnadannyh">Читать в Telegram</a><a href="https://github.com/AASuvorov/orderflow">Код и данные</a></p>
 
 </header>
 <article>
@@ -63,7 +118,7 @@ footer{color:var(--dim);font-size:14px;border-top:1px solid #24344f;
 <p>И чего здесь нет: вывода о том, куда пойдёт цена. Реакция рынка на статистику зависит от того, что уже заложено в цену, а это отдельный замер, которого у меня нет.</p>
 <p>Архив замеров: aasuvorov.github.io/orderflow</p></div>
 <div class="tags"><span>#макро</span><span>#ставкаЦБ</span><span>#календарь</span></div>
-<p><a href="./">← Все замеры</a></p></article>
+<div class="nav"><a href="20260916-155623.html">← Итоги недели в цифрах</a><a href="20260916-164605.html">Схема «десять монет по $10, продавать каждую на +10%»: замерил на данных →</a></div></article>
 <footer>
 <p>Все цифры считаются автоматически из первичных источников: открытый ISS
 Московской биржи, API Binance, сервисы Банка России. Пересказа новостей здесь нет.</p>
