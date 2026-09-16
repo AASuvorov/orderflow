@@ -62,6 +62,22 @@ from tg_post import (
 STATE = TICKS_ROOT.parent / "meta" / "events.json"
 
 CBR_SOAP = "http://www.cbr.ru/DailyInfoWebServ/DailyInfo.asmx"
+FAPI = "https://fapi.binance.com/fapi/v1"
+
+# Порог «экстремального» фандинга. Не выдуман: замерено распределение по 80
+# контрактам с оборотом свыше 50 млн $ — медиана +1.1% годовых, 95-й процентиль
+# +59%. Полсотни процентов годовых — это уже хвост, а не рабочий диапазон.
+FUNDING_EXTREME_PCT = 50.0
+# Оборот, ниже которого перекос не обсуждаем: на тонком контракте фандинг двигают
+# несколько участников, и «толпа» там ничего не значит.
+MIN_TURNOVER_USD = 150e6
+# Один контракт не обсуждаем повторно, пока не пройдёт столько дней: перекос
+# держится сутками, и без этого канал писал бы о нём каждый запуск.
+CROWDING_COOLDOWN_DAYS = 5
+# Сколько постов-событий канал имеет право выпустить за сутки. Событий в крипте
+# сколько угодно, а охват делится между постами: третий пост за день отбирает
+# читателей у первых двух, а не добавляет новых.
+MAX_EVENTS_PER_DAY = 2
 # Ставку объявляем только пока она новость. Решение ЦБ разбирают все, и приходить
 # с ним через две недели незачем; замер при этом остаётся в силе и без повода.
 RATE_FRESH_DAYS = 7
@@ -352,6 +368,239 @@ def expiry_event(state: dict) -> tuple[str, Path] | None:
 
 
 # --------------------------------------------------------------------------- #
+# Крипта: перекос фандинга и новые контракты
+# --------------------------------------------------------------------------- #
+
+
+def perp_universe() -> list[dict]:
+    """Перпетуалы к USDT с ценой, суточным движением, фандингом и оборотом."""
+    tick = {x["symbol"]: x for x in requests.get(f"{FAPI}/ticker/24hr", timeout=40).json()}
+    prem = requests.get(f"{FAPI}/premiumIndex", timeout=40).json()
+
+    rows = []
+    for p in prem:
+        sym = p["symbol"]
+        t = tick.get(sym)
+        if not t or not sym.endswith("USDT"):
+            continue
+        turnover = float(t["quoteVolume"])
+        if turnover < MIN_TURNOVER_USD:
+            continue
+        rows.append({
+            "тикер": sym,
+            "имя": sym.replace("USDT", ""),
+            "цена": float(t["lastPrice"]),
+            "сутки_%": float(t["priceChangePercent"]),
+            "фандинг_год_%": float(p["lastFundingRate"]) * 3 * 365 * 100,
+            "оборот_млн": turnover / 1e6,
+        })
+    return rows
+
+
+SUSTAINED_PAYMENTS = 6  # шесть выплат по 8 часов = двое суток
+
+
+def sustained_funding(symbol: str) -> float | None:
+    """Средняя фактическая ставка фандинга за последние двое суток, % годовых.
+
+    Именно фактическая, из состоявшихся выплат, а не прогноз следующей: разница
+    между ними и есть разница между «перекос держится» и «на минуту дёрнуло».
+    """
+    r = requests.get(
+        f"{FAPI}/fundingRate",
+        params={"symbol": symbol, "limit": SUSTAINED_PAYMENTS},
+        timeout=30,
+    )
+    if r.status_code != 200:
+        return None
+    rows = r.json()
+    if len(rows) < SUSTAINED_PAYMENTS:
+        # Меньше двух суток истории — контракт слишком свежий, чтобы говорить об
+        # устойчивости чего-либо.
+        return None
+    rates = [float(x["fundingRate"]) for x in rows]
+    return sum(rates) / len(rates) * 3 * 365 * 100
+
+
+def crowding_chart(rows: list[dict], hero: dict, path: Path) -> Path:
+    """Облако «фандинг против движения цены» с выделенным героем поста.
+
+    Облако и герой обязаны считаться по одной ставке. Пока облако строилось по
+    прогнозу выплаты, а герой по фактическим, он попадал на график дважды — серым
+    в одной точке и красным в другой, и это выглядело как ошибка данных, потому
+    что ошибкой и было.
+    """
+    fig, ax = plt.subplots(figsize=(10, 6))
+    others = [r for r in rows if r["тикер"] != hero["тикер"]]
+    ax.scatter([r["сутки_%"] for r in others], [r["фандинг_год_%"] for r in others],
+               s=28, color="#8c8c8c", alpha=0.55, label="перпетуалы Binance")
+    ax.scatter([hero["сутки_%"]], [hero["фандинг_год_%"]], s=170, color="firebrick",
+               zorder=5, label=hero["имя"])
+    ax.annotate(
+        hero["имя"],
+        xy=(hero["сутки_%"], hero["фандинг_год_%"]),
+        xytext=(12, 12), textcoords="offset points",
+        fontsize=13, fontweight="bold", color="firebrick",
+    )
+
+    xs = [r["сутки_%"] for r in rows]
+    ys = [r["фандинг_год_%"] for r in rows]
+    pad_x = (max(xs) - min(xs)) * 0.08 or 1
+    pad_y = (max(ys) - min(ys)) * 0.08 or 1
+    ax.set_xlim(min(xs) - pad_x, max(xs) + pad_x)
+    ax.set_ylim(min(ys) - pad_y, max(ys) + pad_y)
+    ax.axhline(0, color="black", lw=1)
+    ax.axvline(0, color="black", lw=1)
+
+    # Четверти, где фандинг спорит с ценой, — единственное, что здесь интересно.
+    # Граница считается по нулю в долях оси: xmin=0.5 делило бы картинку по
+    # середине рамки, а ноль цены почти никогда не стоит в её середине.
+    lo, hi = ax.get_xlim()
+    zero = (0 - lo) / (hi - lo)
+    ax.axhspan(0, ax.get_ylim()[1], xmin=0, xmax=zero, color="#d62728", alpha=0.06)
+    ax.axhspan(ax.get_ylim()[0], 0, xmin=zero, xmax=1, color="#2ca02c", alpha=0.06)
+
+    ax.set_xlabel("движение цены за сутки, %")
+    ax.set_ylabel("фандинг, % годовых (средний по фактическим выплатам за двое суток)")
+    ax.set_title(
+        "Кто платит за удержание позиции\n"
+        f"(перпетуалы с оборотом свыше {MIN_TURNOVER_USD / 1e6:.0f} млн $ в сутки)"
+    )
+    ax.grid(alpha=0.3)
+    ax.legend(fontsize=9)
+    fig.tight_layout()
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return path
+
+
+def crowding_event(state: dict) -> tuple[str, Path] | None:
+    """Фандинг спорит с ценой: толпа платит за позицию, которая идёт против неё.
+
+    Почему именно это считаем новостью, а не движение цены. Цену показывает любой
+    источник, и сказать о ней нечего. Фандинг говорит, кто кому платит за право
+    держать позицию, и когда его знак противоречит движению цены, видно ровно то,
+    чего в цене не видно: сторона, которая платит, ещё и проигрывает.
+    """
+    rows = perp_universe()
+    if not rows:
+        return None
+
+    # Устойчивая ставка считается сразу по всей выборке, а не только по кандидатам:
+    # иначе облако на графике и герой в тексте измерены разными линейками.
+    # Это стоит по одному запросу на контракт, зато сравнение честное.
+    measured = []
+    for r in rows:
+        paid = sustained_funding(r["тикер"])
+        if paid is not None:
+            measured.append({**r, "фандинг_год_%": paid})
+    if not measured:
+        return None
+    rows = measured
+
+    today = dt.date.today()
+    seen = state.setdefault("crowding", {})
+
+    def fresh(sym: str) -> bool:
+        last = seen.get(sym)
+        if not last:
+            return True
+        return (today - dt.date.fromisoformat(last)).days >= CROWDING_COOLDOWN_DAYS
+
+    # Противоречие: платят лонги, а цена падает, либо платят шорты, а цена растёт.
+    candidates = [
+        r for r in rows
+        if abs(r["фандинг_год_%"]) >= FUNDING_EXTREME_PCT
+        and r["фандинг_год_%"] * r["сутки_%"] < 0
+        and fresh(r["тикер"])
+    ]
+    if not candidates:
+        return None
+
+    hero = max(candidates, key=lambda r: abs(r["фандинг_год_%"]))
+    seen[hero["тикер"]] = today.isoformat()
+
+    longs_pay = hero["фандинг_год_%"] > 0
+    who = "лонги" if longs_pay else "шорты"
+    against = "падает" if longs_pay else "растёт"
+    # Стоимость упрямства в понятных деньгах: сколько съест позиция за неделю,
+    # если фандинг останется таким же.
+    weekly = abs(hero["фандинг_год_%"]) / 52
+
+    text = (
+        f"<b>{html.escape(hero['имя'])}: {who} платят "
+        f"{abs(hero['фандинг_год_%']):.0f}% годовых за позицию, которая идёт против "
+        f"них.</b> Цена за сутки {hero['сутки_%']:+.1f}%.\n\n"
+        f"Фандинг — плата за право держать вечный фьючерс, её раз в 8 часов "
+        f"переводит одна сторона другой. Здесь платят {who}, а цена {against}: "
+        "сторона, которая платит, ещё и проигрывает. Так выглядит перекос — "
+        "слишком много желающих в одну сторону.\n\n"
+        f"В деньгах это {weekly:.1f}% от позиции за неделю. Ставка взята не с "
+        "прогноза следующей выплаты, который дёргается внутри интервала, а как "
+        f"средняя по {SUSTAINED_PAYMENTS} фактически состоявшимся выплатам за двое "
+        f"суток — перекос держится, а не мигнул. Оборот "
+        f"{_num(round(hero['оборот_млн']))} млн $ в сутки, то есть цифра не с "
+        "тонкого контракта, где ставку двигают несколько участников.\n\n"
+        "Порог отбора не выдуман: медиана фандинга по этой выборке около 1% "
+        f"годовых, {FUNDING_EXTREME_PCT:.0f}% — уже хвост. На графике видно, где "
+        "остальные.\n\n"
+        "И чего здесь нет: это не сигнал. Перекос говорит, что позиция дорого "
+        "обходится, а не что цена развернётся — знак эффекта зависит от режима "
+        "рынка, я это замерял.\n\n"
+        "#фандинг #крипта #Binance"
+    )
+    return text, crowding_chart(rows, hero, OUT_DIR / "crowding.png")
+
+
+def listing_event(state: dict) -> tuple[str, None] | None:
+    """Новые перпетуалы на Binance: событие, а не мнение о нём.
+
+    Первичный источник — сама биржа, поле onboardDate в exchangeInfo. Пересказ
+    анонсов тут не нужен: факт листинга биржа публикует сама, машинно.
+    """
+    ei = requests.get(f"{FAPI}/exchangeInfo", timeout=40).json()
+    live = [s for s in ei.get("symbols", []) if s.get("status") == "TRADING"]
+    if not live:
+        return None
+
+    today = dt.date.today()
+    fresh = []
+    for s in live:
+        onboard = s.get("onboardDate")
+        if not onboard:
+            continue
+        day = dt.datetime.fromtimestamp(onboard / 1000).date()
+        if 0 <= (today - day).days <= 1:
+            fresh.append((s["symbol"], day))
+
+    if not fresh:
+        return None
+    key = ",".join(sorted(s for s, _ in fresh))
+    if state.get("listings") == key:
+        return None
+    state["listings"] = key
+
+    names = ", ".join(html.escape(s.replace("USDT", "")) for s, _ in sorted(fresh))
+    text = (
+        f"<b>Binance добавила {len(fresh)} новых перпетуалов:</b> {names}.\n\n"
+        f"Всего на бессрочных фьючерсах теперь {len(live)} контрактов. Цифра сама по "
+        "себе показательна: инструментов больше, чем кто-либо способен отслеживать, "
+        "и именно поэтому отбирать их надо по издержкам, а не по интересности.\n\n"
+        "Что стоит посмотреть в новом контракте до всякой торговли, в этом порядке: "
+        "спред относительно цены, потому что на свежих парах он в разы шире, чем на "
+        "мажорах, и съедает результат раньше модели; глубину стакана, потому что "
+        "заявка крупнее верхнего уровня двигает цену сама против себя; и фандинг, "
+        "который на новых контрактах регулярно улетает в десятки процентов годовых "
+        "из-за перекоса в одну сторону.\n\n"
+        "Свежий листинг — это не возможность и не угроза, это инструмент с ещё "
+        "неизмеренными издержками. Пока они не измерены, сказать о нём нечего.\n\n"
+        "#Binance #крипта #издержки"
+    )
+    return text, None
+
+
+# --------------------------------------------------------------------------- #
 # Сборы биржи
 # --------------------------------------------------------------------------- #
 
@@ -407,12 +656,31 @@ def fees_event(state: dict) -> tuple[str, Path] | None:
     return text, None
 
 
-# Порядок задаёт приоритет: за один запуск выходит одно событие, потому что два
-# поста подряд размывают охват, а событий такого рода одновременно почти не бывает.
-EVENTS = (rate_event, fees_event, expiry_event)
+# Порядок задаёт приоритет: за один запуск выходит одно событие. Впереди то, что
+# случается редко и меняет цифры в канале (ставка, сборы, экспирация), затем крипта,
+# где поводов много и они не так значимы.
+EVENTS = (rate_event, fees_event, expiry_event, listing_event, crowding_event)
+
+
+def posted_today(state: dict) -> int:
+    return state.get("posted", {}).get(dt.date.today().isoformat(), 0)
+
+
+def count_post(state: dict) -> None:
+    """Считает выпущенные события по дням, чтобы соблюдать суточный предел.
+
+    Старые дни вычищаются: файл состояния иначе растёт вечно, а нужен только
+    сегодняшний счёт.
+    """
+    today = dt.date.today().isoformat()
+    state["posted"] = {today: posted_today(state) + 1}
 
 
 def pending(state: dict) -> tuple[str, Path | None] | None:
+    if posted_today(state) >= MAX_EVENTS_PER_DAY:
+        print(f"за сегодня уже {posted_today(state)} события — предел исчерпан")
+        return None
+
     for check in EVENTS:
         try:
             found = check(state)
@@ -422,6 +690,7 @@ def pending(state: dict) -> tuple[str, Path | None] | None:
             continue
         if found:
             print(f"событие: {check.__name__}")
+            count_post(state)
             return found
     return None
 

@@ -24,7 +24,8 @@ if [ ! -x "$APP_DIR/.venv/bin/python" ]; then
 	exit 1
 fi
 
-for m in tg_post.py funding.py mm_screen.py moex_feasibility.py moex.py; do
+for m in tg_post.py tg_events.py tg_board.py funding.py mm_screen.py \
+	moex_feasibility.py moex.py; do
 	if [ ! -f "$APP_DIR/$m" ]; then
 		echo "ОШИБКА: нет $APP_DIR/$m" >&2
 		echo "С ноутбука: bash deploy/sync.sh push root@IP" >&2
@@ -96,13 +97,87 @@ AccuracySec=1m
 WantedBy=timers.target
 EOF
 
+# Живая сводка в закрепе. Отдельным юнитом, а не внутри ежедневного поста, потому
+# что закреп надо освежать часто, а постить часто нельзя.
+cat >/etc/systemd/system/orderflow-board.service <<EOF
+[Unit]
+Description=Обновление живой сводки в закрепе
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=$APP_DIR
+Environment=ORDERFLOW_DATA=$DATA_DIR
+Environment=MPLCONFIGDIR=$DATA_DIR/mpl
+EnvironmentFile=$ENV_FILE
+ExecStart=$APP_DIR/.venv/bin/python $APP_DIR/tg_board.py
+TimeoutStartSec=180
+EOF
+
+cat >/etc/systemd/system/orderflow-board.timer <<'EOF'
+[Unit]
+Description=Живая сводка в закрепе, каждый час
+
+[Timer]
+# Каждый час: правка закрепа не шлёт уведомлений, поэтому частота никого не
+# беспокоит, а цифры в первом же экране канала всегда свежие. Persistent здесь не
+# нужен — пропущенное обновление бессмысленно догонять, следующее актуальнее.
+OnCalendar=hourly
+AccuracySec=2m
+
+[Install]
+WantedBy=timers.target
+EOF
+
+# Проверка событий в течение дня. Запускается ПОСЛЕ ежедневного поста: в 09:00 МСК
+# события проверяет сам tg_post.py, и если событие есть, оно вытесняет отчёт дня.
+cat >/etc/systemd/system/orderflow-events.service <<EOF
+[Unit]
+Description=Проверка событий и публикация, если есть повод
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=$APP_DIR
+Environment=ORDERFLOW_DATA=$DATA_DIR
+Environment=MPLCONFIGDIR=$DATA_DIR/mpl
+EnvironmentFile=$ENV_FILE
+ExecStart=$APP_DIR/.venv/bin/python $APP_DIR/tg_events.py
+# Перекос фандинга считается по фактическим выплатам — запрос на контракт, около
+# минуты на всю выборку.
+TimeoutStartSec=600
+EOF
+
+cat >/etc/systemd/system/orderflow-events.timer <<'EOF'
+[Unit]
+Description=Проверка событий днём, каждые три часа
+
+[Timer]
+# 08:00–17:00 UTC = 11:00–20:00 МСК, четыре проверки. Ночью не проверяем: пост в
+# три часа ночи прочтут единицы, а охват делится на всех подписчиков независимо
+# от того, спали они или нет. Суточный предел постов задан в tg_events.py, здесь
+# только частота попыток — событий может не быть вовсе, и это нормальный исход.
+OnCalendar=Mon-Sat 08,11,14,17:00:00
+Persistent=false
+AccuracySec=5m
+
+[Install]
+WantedBy=timers.target
+EOF
+
 systemctl daemon-reload
 systemctl enable --now orderflow-tg.timer
+systemctl enable --now orderflow-board.timer
+systemctl enable --now orderflow-events.timer
 
 echo
 echo "=== Готово ==="
-echo "Расписание:   systemctl list-timers orderflow-tg"
-echo "Логи:         journalctl -u orderflow-tg -n 50 --no-pager"
+echo "Расписание:   systemctl list-timers 'orderflow-*'"
+echo "Логи поста:   journalctl -u orderflow-tg -n 50 --no-pager"
+echo "Логи событий: journalctl -u orderflow-events -n 50 --no-pager"
+echo "Логи закрепа: journalctl -u orderflow-board -n 20 --no-pager"
 echo "Проверка:     set -a; . $ENV_FILE; set +a; \\"
 echo "              ORDERFLOW_DATA=$DATA_DIR $APP_DIR/.venv/bin/python $APP_DIR/tg_post.py check"
 echo "Пробный пост: systemctl start orderflow-tg.service"
