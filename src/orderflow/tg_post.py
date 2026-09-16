@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import datetime as dt
 import html
+import json
 import os
 import sys
 import time
@@ -187,6 +188,47 @@ def stamp_published(report: str) -> None:
     )
 
 
+def archive(text: str, image: Path | None) -> None:
+    """Складывает опубликованное в архив, из которого собирается сайт.
+
+    Архив ведётся здесь, а не читается потом из канала, по простой причине: Bot API
+    не отдаёт историю канала. Бот видит только то, что происходит при нём, поэтому
+    единственный момент, когда пост можно сохранить, — момент отправки.
+
+    Картинка копируется, а не запоминается путём: файлы отчётов перезаписываются
+    при каждом запуске, и через день ссылка вела бы на другую картинку.
+    """
+    root = TICKS_ROOT.parent / "archive"
+    (root / "img").mkdir(parents=True, exist_ok=True)
+
+    now = dt.datetime.now()
+    index = root / "posts.json"
+    posts = json.loads(index.read_text(encoding="utf-8")) if index.exists() else []
+
+    # Секунды в slug недостаточно: один запуск публикует несколько отчётов подряд, и
+    # два из них уже попали в одну секунду. Совпавший slug — это и общее имя страницы
+    # на сайте, и общее имя файла картинки, так что пост молча терял и то и другое.
+    taken = {p["slug"] for p in posts}
+    slug = base = now.strftime("%Y%m%d-%H%M%S")
+    n = 2
+    while slug in taken:
+        slug = f"{base}-{n}"
+        n += 1
+
+    img_name = None
+    if image and image.exists():
+        img_name = f"{slug}{image.suffix}"
+        (root / "img" / img_name).write_bytes(image.read_bytes())
+
+    posts.append({
+        "slug": slug,
+        "время": now.isoformat(timespec="seconds"),
+        "html": text,
+        "картинка": img_name,
+    })
+    index.write_text(json.dumps(posts, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
 def publish(text: str, image: Path | None = None, *, dry_run: bool = False) -> None:
     """Публикует пост. Длинный текст уходит отдельным сообщением после фото.
 
@@ -208,17 +250,20 @@ def publish(text: str, image: Path | None = None, *, dry_run: bool = False) -> N
     if image is None:
         _call("sendMessage", text=text, parse_mode="HTML",
               link_preview_options='{"is_disabled":true}')
+        archive(text, None)
         print("опубликовано (текст)")
         return
 
     with image.open("rb") as fh:
         if len(text) <= CAPTION_LIMIT:
             _call("sendPhoto", files={"photo": fh}, caption=text, parse_mode="HTML")
+            archive(text, image)
             print("опубликовано (фото с подписью)")
             return
         _call("sendPhoto", files={"photo": fh})
     _call("sendMessage", text=text, parse_mode="HTML",
           link_preview_options='{"is_disabled":true}')
+    archive(text, image)
     print("опубликовано (фото + текст)")
 
 
@@ -445,10 +490,9 @@ def costs_report() -> tuple[str, Path]:
         "Именно эта цифра задаёт минимальную точность, при которой торговля "
         "вообще не убыточна.\n\n"
         + listing
-        + "\n\nНа дорогом контракте та же стратегия требует заметно более высокой "
-        "точности при том же движении цены — поэтому инструмент выбирают по "
-        "издержкам, а не по оборотам.\n\n"
-        "Замер автоматический, по текущим спецификациям МОЕХ. "
+        + "\n\nНа дорогом контракте та же стратегия требует более высокой точности "
+        "при том же движении цены — поэтому инструмент выбирают по издержкам, а не "
+        "по оборотам. Считается по текущим спецификациям МОЕХ.\n\n"
         + footer("costs")
     )
     return text, costs_chart(rows)
@@ -724,12 +768,18 @@ TAGS = {
 }
 
 
+SITE = "aasuvorov.github.io/orderflow"
+
+
 def footer(report: str) -> str:
-    """Подпись поста: ссылка на код и хештеги для глобального поиска."""
-    return (
-        "Код: github.com/AASuvorov/orderflow\n\n"
-        + " ".join(TAGS[report])
-    )
+    """Подпись поста: архив на сайте и хештеги для глобального поиска.
+
+    Ссылки на код здесь больше нет: она стояла под каждым постом и после первого
+    раза не добавляла ничего — постоянный читатель её уже видел, а случайный идёт
+    в закреп, где она и осталась. Вместо неё архив, и это другой случай: в канале
+    пост тонет через день, а на сайте остаётся адресом, который можно дать в споре.
+    """
+    return f"Архив замеров: {SITE}\n\n" + " ".join(TAGS[report])
 
 
 def market_day(date: str) -> pl.DataFrame:

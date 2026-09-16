@@ -243,7 +243,7 @@ def breakeven_clip(path: Path) -> tuple[Path, str]:
         "Отсюда практический вывод, который стоит дороже любого индикатора: "
         "<b>издержки диктуют горизонт удержания.</b> Не наоборот. Считать это "
         "надо до выбора сигнала, а не после первой просадки.\n\n"
-        "Код: github.com/AASuvorov/orderflow\n\n"
+        "Архив замеров: aasuvorov.github.io/orderflow\n\n"
         "#МОЕХ #фьючерсы #издержки"
     )
     return path, caption

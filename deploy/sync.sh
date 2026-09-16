@@ -3,6 +3,7 @@
 #
 #   bash deploy/sync.sh push root@IP    — отправить код на сервер
 #   bash deploy/sync.sh pull root@IP    — забрать накопленные тики на ноутбук
+#   bash deploy/sync.sh archive root@IP — свести архивы постов для сайта
 #
 # Тики забираются в тот же data/moex_ticks, где их ждут footprint.py и edge.py,
 # поэтому после pull анализ запускается без каких-либо правок.
@@ -19,7 +20,7 @@ SRC="$ROOT/src/orderflow"
 LOCAL_DATA="$ROOT/data/moex_ticks"
 
 if [ -z "$MODE" ] || [ -z "$HOST" ]; then
-	echo "использование: bash deploy/sync.sh {push|pull} user@host" >&2
+	echo "использование: bash deploy/sync.sh {push|pull|archive} user@host" >&2
 	exit 1
 fi
 
@@ -32,11 +33,11 @@ push)
 	# ноутбуке они появляются только после pull.
 	rsync -avz "$SRC/moex_ticks.py" "$SRC/moex.py" "$SRC/watchdog.py" \
 		"$SRC/tg_post.py" "$SRC/tg_video.py" "$SRC/tg_events.py" \
-		"$SRC/tg_board.py" "$SRC/funding.py" "$SRC/mm_screen.py" \
-		"$SRC/moex_feasibility.py" \
+		"$SRC/tg_board.py" "$SRC/site_build.py" "$SRC/funding.py" \
+		"$SRC/mm_screen.py" "$SRC/moex_feasibility.py" \
 		"$HOST:$APP_DIR/"
 	rsync -avz "$ROOT/deploy/install.sh" "$ROOT/deploy/install-tg.sh" \
-		"$HOST:$APP_DIR/"
+		"$ROOT/deploy/install-site.sh" "$HOST:$APP_DIR/"
 	echo
 	echo "Дальше на сервере:"
 	echo "  ssh $HOST 'bash $APP_DIR/install.sh'      # сбор тиков"
@@ -54,6 +55,25 @@ pull)
 	echo ">>> Объединение с локальной базой"
 	cd "$SRC" && uv run python moex_ticks.py merge "$INCOMING"
 	rm -rf "$INCOMING"
+	;;
+archive)
+	# Архив опубликованного ведут обе стороны: сервер по расписанию, ноутбук при
+	# ручной публикации. Сайт собирается из архива целиком и выкладывается
+	# перезаписью ветки, поэтому без сведения тот, кто собрал последним, убирал бы
+	# с сайта чужие посты. Восстановить их негде: истории канала Bot API не отдаёт.
+	INCOMING="$ROOT/data/archive_incoming"
+	echo ">>> Архив с $HOST"
+	mkdir -p "$INCOMING"
+	rsync -avz "$HOST:$DATA_DIR/archive/" "$INCOMING/"
+
+	echo
+	echo ">>> Серверные посты в локальный архив"
+	cd "$SRC" && uv run python site_build.py --merge "$INCOMING"
+	rm -rf "$INCOMING"
+
+	echo
+	echo ">>> Сведённый архив назад на сервер"
+	rsync -avz "$ROOT/data/archive/" "$HOST:$DATA_DIR/archive/"
 	;;
 *)
 	echo "неизвестный режим: $MODE (ожидается push или pull)" >&2

@@ -203,7 +203,7 @@ def rate_event(state: dict) -> tuple[str, Path] | None:
         "перпетуалах платит проценты в долларах, и разница ставок между валютами "
         "уже сидит в форварде — рублёвая и долларовая доходности сопоставимы только "
         "после приведения к одной валюте, вместе со стоимостью этого приведения.\n\n"
-        "Код: github.com/AASuvorov/orderflow\n\n"
+        "Архив замеров: aasuvorov.github.io/orderflow\n\n"
         "#ставкаЦБ #МОЕХ #издержки"
     )
     return text, path
@@ -361,10 +361,259 @@ def expiry_event(state: dict) -> tuple[str, Path] | None:
         "по половине круга на ноге. Это не бесплатная техническая операция, а "
         "четыре раза в год списываемые издержки, которые редко закладывают в "
         "расчёт доходности.\n\n"
-        "Код: github.com/AASuvorov/orderflow\n\n"
+        "Архив замеров: aasuvorov.github.io/orderflow\n\n"
         "#МОЕХ #фьючерсы #экспирация"
     )
     return text, expiry_chart(roll, day, OUT_DIR / "expiry_roll.png")
+
+
+# --------------------------------------------------------------------------- #
+# Экономический календарь: факт против прогноза
+# --------------------------------------------------------------------------- #
+
+CALENDAR_API = "https://biquote.io/api/calendar"
+# Расхождение факта с прогнозом, ниже которого публика не заметит и мы молчим,
+# в единицах самого показателя (проценты — процентные пункты).
+MIN_SURPRISE = 0.2
+
+# Названия показателей по-русски. Словарём, а не переводчиком: машинный перевод
+# макростатистики регулярно путает «Core» с «основной» и меняет смысл, а список
+# показателей высокой значимости короткий и почти не меняется. Незнакомое название
+# остаётся как есть — это честнее, чем угадывать.
+INDICATORS = {
+    "CPI y/y": "инфляция, год к году",
+    "CPI m/m": "инфляция, месяц к месяцу",
+    "Core CPI y/y": "базовая инфляция, год к году",
+    "Core CPI m/m": "базовая инфляция, месяц к месяцу",
+    "CPIH y/y": "инфляция с жильём, год к году",
+    "CPIH m/m": "инфляция с жильём, месяц к месяцу",
+    "PPI Output m/m": "отпускные цены производителей",
+    "Core PPI m/m": "базовые цены производителей",
+    "PPI Input m/m": "цены производителей, месяц к месяцу",
+    "Retail Sales m/m": "розничные продажи, месяц к месяцу",
+    "Core Retail Sales m/m": "розница без автомобилей, месяц к месяцу",
+    "Retail Control m/m": "контрольная группа розницы",
+    "Import Price Index m/m": "цены импорта, месяц к месяцу",
+    "Unemployment Rate": "безработица",
+    "Nonfarm Payrolls": "занятость вне сельского хозяйства",
+    "GDP q/q": "ВВП, квартал к кварталу",
+    "GDP y/y": "ВВП, год к году",
+    "Industrial Production m/m": "промышленное производство",
+    "Wage Costs y/y": "затраты на оплату труда",
+    "Interest Rate Decision": "решение по ставке",
+    "PMI Manufacturing": "деловая активность в промышленности",
+    "PMI Services": "деловая активность в услугах",
+    "CMHC Housing Starts": "закладки новых домов",
+    "Building Permits": "разрешения на строительство",
+    "Housing Starts": "закладки новых домов",
+    "Initial Jobless Claims": "первичные заявки на пособие",
+    "Trade Balance": "торговый баланс",
+    "Current Account": "счёт текущих операций",
+    "Business Inventories m/m": "запасы бизнеса",
+    "Consumer Confidence": "потребительская уверенность",
+    "Crude Oil Inventories": "запасы нефти",
+}
+
+COUNTRIES = {
+    "US": "США", "EU": "еврозона", "GB": "Британия", "DE": "Германия",
+    "CN": "Китай", "JP": "Япония", "CA": "Канада", "RU": "Россия",
+    "IN": "Индия", "BR": "Бразилия", "TR": "Турция", "KZ": "Казахстан",
+    "PL": "Польша", "IT": "Италия", "MX": "Мексика", "ZA": "ЮАР",
+    "SE": "Швеция", "CZ": "Чехия", "HU": "Венгрия", "IL": "Израиль",
+    "NZ": "Новая Зеландия", "DK": "Дания", "BE": "Бельгия", "GR": "Греция",
+    "IE": "Ирландия",
+}
+
+
+def calendar_today() -> list[dict]:
+    """События календаря за сегодня, без дублей.
+
+    Источник сводит несколько поставщиков, поэтому один и тот же показатель
+    приходит по нескольку раз, и часть копий ещё без опубликованного значения.
+    Схлопываем по стране, названию и времени, предпочитая запись с фактом: без
+    этого пост мог бы объявить, что данных ещё нет, когда они уже вышли.
+    """
+    today = dt.date.today()
+    r = requests.get(
+        CALENDAR_API,
+        params={"from": today.isoformat(), "to": (today + dt.timedelta(days=1)).isoformat()},
+        timeout=40,
+    )
+    r.raise_for_status()
+    payload = r.json()
+    data = payload["data"] if isinstance(payload, dict) and "data" in payload else payload
+
+    best: dict[tuple, dict] = {}
+    for e in data:
+        if not e.get("time", "").startswith(today.isoformat()):
+            continue
+        key = (e.get("countryCode"), e.get("name"), e["time"][:16])
+        cur = best.get(key)
+        if cur is None or (cur.get("actual") is None and e.get("actual") is not None):
+            best[key] = e
+    return list(best.values())
+
+
+def ru_indicator(name: str) -> str:
+    return INDICATORS.get(name, name)
+
+
+def ru_country(code: str) -> str:
+    return COUNTRIES.get(code, code or "?")
+
+
+def calendar_chart(events: list[dict], hero: dict, path: Path) -> Path:
+    """Расхождения факта с прогнозом по сегодняшним публикациям."""
+    rows = sorted(events, key=lambda e: abs(e["actual"] - e["forecast"]))
+    labels = [f"{ru_country(e['countryCode'])}: {ru_indicator(e['name'])}" for e in rows]
+    vals = [e["actual"] - e["forecast"] for e in rows]
+    colors = ["#d62728" if v > 0 else "#2ca02c" for v in vals]
+    # Красный — вышло выше прогноза, зелёный — ниже. Цвет здесь про направление
+    # расхождения, а не про «хорошо/плохо»: для инфляции выше прогноза плохо, для
+    # розницы хорошо, и присваивать оценку было бы подменой замера мнением.
+    hero_i = next((i for i, e in enumerate(rows) if e is hero), None)
+
+    fig, ax = plt.subplots(figsize=(10, max(3.2, 0.62 * len(rows) + 1.6)))
+    bars = ax.barh(range(len(rows)), vals, color=colors, alpha=0.85)
+    if hero_i is not None:
+        bars[hero_i].set_edgecolor("black")
+        bars[hero_i].set_linewidth(2)
+    span = max(abs(v) for v in vals) or 1
+    for i, (v, e) in enumerate(zip(vals, rows)):
+        ax.text(v + span * 0.03 * (1 if v >= 0 else -1), i,
+                f"{e['actual']:g} против {e['forecast']:g}",
+                va="center", ha="left" if v >= 0 else "right", fontsize=9)
+    ax.axvline(0, color="black", lw=1.2)
+    ax.set_yticks(range(len(rows)))
+    ax.set_yticklabels(labels, fontsize=10)
+    ax.set_xlabel("насколько факт отклонился от прогноза, п.п.")
+    ax.set_title(f"Что вышло сегодня и чего ждали ({dt.date.today():%d.%m.%Y})")
+    # Запас по краям под подписи значений: без него самая длинная обрезается рамкой,
+    # причём именно у самого крупного расхождения — то есть у главного в посте.
+    ax.set_xlim(-span * 1.45, span * 1.45)
+    ax.grid(alpha=0.3, axis="x")
+    fig.tight_layout()
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return path
+
+
+def calendar_event(state: dict) -> tuple[str, Path] | None:
+    """Публикация макростатистики, которая заметно разошлась с прогнозом.
+
+    Почему не сводка всех событий дня. Календарь публикуют сотни каналов, и он
+    ничего не добавляет: список того, что выйдет, доступен всем и бесплатно. Смысл
+    появляется в момент выхода — когда видно, насколько консенсус промахнулся.
+
+    Порога в сигмах здесь нет намеренно. Источник отдаёт по два-три прошлых замера
+    с прогнозом, а по такой выборке считать типичный разброс нельзя: получилась бы
+    цифра с видом статистики и без её содержания. Поэтому сравнение прямое — факт
+    против прогноза и против прошлого значения, в единицах самого показателя.
+    """
+    events = calendar_today()
+    ready = [
+        e for e in events
+        if e.get("actual") is not None and e.get("forecast") is not None
+        and isinstance(e["actual"], (int, float)) and isinstance(e["forecast"], (int, float))
+    ]
+    if not ready:
+        return None
+
+    candidates = [
+        e for e in ready
+        if e.get("importance") == "high"
+        and abs(e["actual"] - e["forecast"]) >= MIN_SURPRISE
+    ]
+    if not candidates:
+        return None
+
+    def interest(e: dict) -> tuple[int, float]:
+        """Насколько публикация интересна, а не насколько велик промах в пунктах.
+
+        Сравнивать промахи разных показателей в процентных пунктах нельзя: 0.9 п.п.
+        по месячной розничной статистике — рядовое дело, а 0.6 п.п. по годовой
+        инфляции меняет ожидания по ставке. Поэтому промах меряется относительно
+        того сдвига, которого вообще ждали, и отдельно отмечается разворот
+        направления: ждали снижения, вышел рост — самый содержательный случай,
+        и он не зависит ни от единиц, ни от масштаба показателя.
+        """
+        a, f, prev = e["actual"], e["forecast"], e.get("previous")
+        miss = abs(a - f)
+        if not isinstance(prev, (int, float)):
+            return (0, miss)
+        expected, actual = f - prev, a - prev
+        reversed_dir = 1 if expected * actual < 0 else 0
+        return (reversed_dir, miss / max(abs(expected), 0.05))
+
+    hero = max(candidates, key=interest)
+    # Ключ с датой: один и тот же показатель выходит ежемесячно, и запрещать его
+    # навсегда нельзя — нельзя повторяться только внутри одного дня.
+    key = f"{dt.date.today().isoformat()}:{hero.get('eventId')}"
+    if state.get("calendar") == key:
+        return None
+    state["calendar"] = key
+
+    a, f = hero["actual"], hero["forecast"]
+    prev = hero.get("previous")
+    higher = a > f
+    unit = "%" if hero.get("unit") == "percent" else ""
+    name = ru_indicator(hero["name"])
+    country = ru_country(hero["countryCode"])
+
+    # Самая содержательная формулировка — не размер промаха, а расхождение
+    # направлений: ждали снижения, получили рост. Она видна без всякой статистики.
+    turn = ""
+    if isinstance(prev, (int, float)):
+        expected_move = f - prev
+        actual_move = a - prev
+        if expected_move * actual_move < 0:
+            turn = (
+                f" Ждали движения {'вверх' if expected_move > 0 else 'вниз'} "
+                f"с {prev:g}{unit}, а показатель пошёл в другую сторону."
+            )
+        elif abs(actual_move) > abs(expected_move) * 2 and expected_move != 0:
+            turn = (
+                f" Ждали сдвига на {abs(expected_move):.2g} п.п. с {prev:g}{unit}, "
+                f"вышло {abs(actual_move):.2g}."
+            )
+
+    # Односторонний перекос дня заметнее любого отдельного промаха: если почти всё
+    # вышло выше прогноза, ошибся не один показатель, а вся картина ожиданий.
+    shown_all = [e for e in ready if e.get("importance") in ("high", "medium")]
+    above = sum(1 for e in shown_all if e["actual"] > e["forecast"])
+    tilt = ""
+    if len(shown_all) >= 5 and above >= len(shown_all) * 0.75:
+        tilt = (
+            f"И это не единичный промах: из {len(shown_all)} сегодняшних публикаций "
+            f"{above} вышли выше прогноза. Ошиблись не в одном показателе, а в "
+            "картине целиком. "
+        )
+    elif len(shown_all) >= 5 and (len(shown_all) - above) >= len(shown_all) * 0.75:
+        tilt = (
+            f"И это не единичный промах: из {len(shown_all)} сегодняшних публикаций "
+            f"{len(shown_all) - above} вышли ниже прогноза. "
+        )
+
+    text = (
+        f"<b>{country}, {name}: {a:g}{unit} против прогноза {f:g}{unit}.</b> "
+        f"Консенсус {'недооценил' if higher else 'переоценил'} показатель на "
+        f"{abs(a - f):.2g} п.п.{turn}\n\n"
+        f"Зачем это в канале про замеры. Такие расхождения двигают ожидания по "
+        f"ставке, а ставка — та самая планка, которую обязана побить любая схема: "
+        f"пока рублёвый вклад даёт свои проценты без риска, всё, что ниже, "
+        f"проигрывает бездействию. Цифру планки держу в закрепе, она "
+        f"обновляется сама.\n\n"
+        f"{tilt}На графике — все сегодняшние публикации высокой и средней значимости, "
+        f"у которых прогноз и факт уже известны.\n\n"
+        "И чего здесь нет: вывода о том, куда пойдёт цена. Реакция рынка на "
+        "статистику зависит от того, что уже заложено в цену, а это отдельный "
+        "замер, которого у меня нет.\n\n"
+        "Архив замеров: aasuvorov.github.io/orderflow\n\n"
+        "#макро #ставкаЦБ #календарь"
+    )
+
+    return text, calendar_chart(shown_all or [hero], hero, OUT_DIR / "calendar.png")
 
 
 # --------------------------------------------------------------------------- #
@@ -548,6 +797,7 @@ def crowding_event(state: dict) -> tuple[str, Path] | None:
         "И чего здесь нет: это не сигнал. Перекос говорит, что позиция дорого "
         "обходится, а не что цена развернётся — знак эффекта зависит от режима "
         "рынка, я это замерял.\n\n"
+        "Архив замеров: aasuvorov.github.io/orderflow\n\n"
         "#фандинг #крипта #Binance"
     )
     return text, crowding_chart(rows, hero, OUT_DIR / "crowding.png")
@@ -595,6 +845,7 @@ def listing_event(state: dict) -> tuple[str, None] | None:
         "из-за перекоса в одну сторону.\n\n"
         "Свежий листинг — это не возможность и не угроза, это инструмент с ещё "
         "неизмеренными издержками. Пока они не измерены, сказать о нём нечего.\n\n"
+        "Архив замеров: aasuvorov.github.io/orderflow\n\n"
         "#Binance #крипта #издержки"
     )
     return text, None
@@ -650,7 +901,7 @@ def fees_event(state: dict) -> tuple[str, Path] | None:
         "которая задаёт минимальную точность и минимальный горизонт для любой "
         "стратегии. Меняются сборы — сдвигаются все пороги, которые здесь "
         "публиковались раньше, и старые цифры перестают быть верными.\n\n"
-        "Код: github.com/AASuvorov/orderflow\n\n"
+        "Архив замеров: aasuvorov.github.io/orderflow\n\n"
         "#МОЕХ #фьючерсы #издержки"
     )
     return text, None
@@ -659,7 +910,8 @@ def fees_event(state: dict) -> tuple[str, Path] | None:
 # Порядок задаёт приоритет: за один запуск выходит одно событие. Впереди то, что
 # случается редко и меняет цифры в канале (ставка, сборы, экспирация), затем крипта,
 # где поводов много и они не так значимы.
-EVENTS = (rate_event, fees_event, expiry_event, listing_event, crowding_event)
+EVENTS = (rate_event, fees_event, expiry_event, calendar_event, listing_event,
+          crowding_event)
 
 
 def posted_today(state: dict) -> int:

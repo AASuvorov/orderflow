@@ -125,6 +125,62 @@ def crypto_snapshot() -> list[dict]:
     return rows
 
 
+CALENDAR_LINES = 4
+
+
+def calendar_block() -> list[str]:
+    """Что из макростатистики выходит сегодня и что уже вышло.
+
+    Именно в закрепе, а не постом: календарь интересен ровно один день и обновляется
+    несколько раз за него. Пост с ним пришлось бы публиковать ежедневно, вытесняя
+    замеры, а к вечеру он всё равно устаревал бы. Отдельным постом выходит только
+    расхождение факта с прогнозом — там уже есть что сказать.
+    """
+    try:
+        from tg_events import calendar_today, ru_country, ru_indicator
+    except Exception:
+        return []
+
+    try:
+        events = [
+            e for e in calendar_today()
+            if e.get("importance") in ("high", "medium")
+        ]
+    except Exception as exc:
+        print(f"календарь недоступен ({exc}) — сводка без него")
+        return []
+    if not events:
+        return []
+
+    ahead, done = [], []
+    for e in sorted(events, key=lambda x: x["time"]):
+        when = dt.datetime.fromisoformat(e["time"].replace("Z", "+00:00"))
+        msk = (when + dt.timedelta(hours=3)).strftime("%H:%M")
+        label = f"{ru_country(e['countryCode'])}: {ru_indicator(e['name'])}"
+        a, f = e.get("actual"), e.get("forecast")
+        if a is None:
+            hint = f" (ждут {f:g})" if isinstance(f, (int, float)) else ""
+            ahead.append(f"{msk} — {label}{hint}")
+        elif isinstance(a, (int, float)) and isinstance(f, (int, float)):
+            done.append((abs(a - f), f"{label}: <b>{a:g}</b> против {f:g}"))
+    # Из вышедшего показываем не последнее по времени, а самое расходящееся с
+    # прогнозом: попадание в прогноз не новость, промах — новость.
+    done.sort(key=lambda x: -x[0])
+
+    lines = ["", "<b>Сегодня в календаре</b>"]
+    # Впереди — важнее: вышедшее уже можно посмотреть где угодно, а ближайшее
+    # объясняет, почему рынок может дёрнуться в следующий час.
+    if ahead:
+        lines += [f"· {x}" for x in ahead[:CALENDAR_LINES]]
+        if len(ahead) > CALENDAR_LINES:
+            lines.append(f"· и ещё {len(ahead) - CALENDAR_LINES} публикаций")
+    if done:
+        room = max(1, CALENDAR_LINES - len(ahead[:CALENDAR_LINES]))
+        lines.append("Уже вышло, сильнее всего мимо прогноза:")
+        lines += [f"· {x}" for _, x in done[:room]]
+    return lines
+
+
 def board() -> str:
     """Блок живых цифр, который встаёт над постоянной частью закрепа."""
     c = cbr_rates()
@@ -148,9 +204,10 @@ def board() -> str:
             f"<b>{r['тикер']}</b> {_num(r['цена'])} $ ({r['сутки_%']:+.1f}% за сутки), "
             f"фандинг {r['фандинг_год_%']:+.1f}% годовых — {who}."
         )
+    lines += calendar_block()
     lines += [
         "",
-        "Сводка обновляется сама, из ЦБ и Binance напрямую.",
+        "Сводка обновляется сама, из ЦБ, Binance и календаря напрямую.",
         "———",
         "",
     ]
