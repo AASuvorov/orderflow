@@ -31,8 +31,8 @@ push)
 	# Публикация здесь потому, что отчёт о сессии читает свежие тики, а на
 	# ноутбуке они появляются только после pull.
 	rsync -avz "$SRC/moex_ticks.py" "$SRC/moex.py" "$SRC/watchdog.py" \
-		"$SRC/tg_post.py" "$SRC/funding.py" "$SRC/mm_screen.py" \
-		"$SRC/moex_feasibility.py" \
+		"$SRC/tg_post.py" "$SRC/tg_video.py" "$SRC/funding.py" \
+		"$SRC/mm_screen.py" "$SRC/moex_feasibility.py" \
 		"$HOST:$APP_DIR/"
 	rsync -avz "$ROOT/deploy/install.sh" "$ROOT/deploy/install-tg.sh" \
 		"$HOST:$APP_DIR/"
