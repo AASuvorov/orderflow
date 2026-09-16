@@ -31,6 +31,7 @@ from tg_post import API, _credentials
 
 CBR_DAILY = "https://www.cbr.ru/scripts/XML_daily.asp"
 FAPI_BASE = "https://fapi.binance.com/fapi/v1"
+ISS_INDEX = "https://iss.moex.com/iss/engines/stock/markets/index/securities/IMOEX.json"
 
 # Сообщение канала, в котором живёт закреп. Публиковать новое нельзя: у бота нет
 # права закреплять, а замена закрепа стоила бы уведомления всем подписчикам.
@@ -125,6 +126,51 @@ def crypto_snapshot() -> list[dict]:
     return rows
 
 
+def imoex() -> dict | None:
+    """Индекс МОЕХ: текущее значение и изменение к закрытию.
+
+    Вне торгов ISS отдаёт в CURRENTVALUE ноль, а не последнюю цену, поэтому берётся
+    LASTVALUE: иначе ночью и в выходные в закрепе стоял бы нулевой индекс.
+    """
+    try:
+        r = requests.get(
+            ISS_INDEX,
+            params={
+                "iss.meta": "off", "iss.only": "marketdata",
+                "marketdata.columns": "CURRENTVALUE,LASTVALUE,LASTCHANGEPRC",
+            },
+            timeout=20,
+        )
+        r.raise_for_status()
+        row = r.json()["marketdata"]["data"][0]
+    except Exception as exc:
+        print(f"индекс МОЕХ недоступен ({exc}) — сводка без него")
+        return None
+
+    current, last, change = row
+    value = current or last
+    if not value:
+        return None
+    return {"значение": float(value), "изм_%": float(change or 0)}
+
+
+def headline(c: dict, crypto: list[dict], index: dict | None) -> str:
+    """Одна короткая строка с курсами — самое верхнее в закрепе.
+
+    В плашке закреплённого сообщения Telegram показывает только первую строку и
+    обрезает её по ширине экрана. Поэтому цифры, которые нужны чаще всего, стоят
+    первыми и без слов: подпись «Ключевая ставка ЦБ» съела бы всю плашку, а
+    значение в неё уже не попало бы. Остальное раскрывается по нажатию.
+    """
+    parts = [f"💵 ₽{c['USD']:.2f}"]
+    if index:
+        parts.append(f"📊 {index['значение']:.2f}")
+    btc = next((r for r in crypto if r["тикер"] == "BTC"), None)
+    if btc:
+        parts.append(f"₿ ${btc['цена']:,.0f}".replace(",", " "))
+    return "  ".join(parts)
+
+
 CALENDAR_LINES = 4
 
 
@@ -185,17 +231,25 @@ def board() -> str:
     """Блок живых цифр, который встаёт над постоянной частью закрепа."""
     c = cbr_rates()
     crypto = crypto_snapshot()
+    index = imoex()
     now = dt.datetime.now().strftime("%H:%M")
 
     lines = [
+        f"<b>{headline(c, crypto, index)}</b>",
+        "",
         f"<b>Живые цифры · {c['дата']}, {now} МСК</b>",
         "",
         f"Ключевая ставка ЦБ: <b>{c['ставка']:.2f}%</b> — это и есть планка, "
         "которую обязана побить любая рублёвая схема.",
         f"Курсы ЦБ: доллар {_num(c['USD'])} ₽, юань {_num(c['CNY'])} ₽, "
         f"евро {_num(c['EUR'])} ₽.",
-        "",
     ]
+    if index:
+        lines.append(
+            f"Индекс МОЕХ: <b>{index['значение']:.2f}</b> ({index['изм_%']:+.2f}% "
+            "к закрытию)."
+        )
+    lines.append("")
     for r in crypto:
         # Фандинг важнее цены: цену покажет любой источник, а знак фандинга
         # говорит, кто кому платит за удержание позиции, и это уже вывод.

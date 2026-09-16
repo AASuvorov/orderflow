@@ -42,42 +42,93 @@ CHANNEL = "https://t.me/tradingnadannyh"
 REPO = "https://github.com/AASuvorov/orderflow"
 
 # Цвета те же, что у аватара и видеоклипов: узнаваемость важнее оригинальности.
+#
+# Шрифт подключается с запасом из системных: если Google Fonts недоступен — а в
+# России это обычное дело, — страница обязана остаться читаемой, а не поехать.
+# Цифры набираются табличными глифами: в замерах они стоят столбиками, и
+# пропорциональные знаки заставляли бы глаз выравнивать их заново на каждой строке.
 CSS = """
-:root{--bg:#0F1B2D;--card:#16243a;--ink:#E8EEF7;--dim:#8A99AD;--teal:#2ED3C6;--warn:#FF6B57}
+:root{
+  --bg:#0B1524;--bg2:#0F1B2D;--card:#141F33;--card2:#18243B;
+  --line:#22314C;--ink:#EDF2FA;--dim:#8798AF;--teal:#2ED3C6;--warn:#FF6B57;
+  --radius:16px;--maxw:820px
+}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);
-  font:17px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;
+  font:400 17px/1.7 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,
+  "Helvetica Neue",Arial,sans-serif;
+  background-image:radial-gradient(1200px 600px at 50% -240px,#16305180,transparent)}
+.num,time,.stat b,.board b{font-variant-numeric:tabular-nums}
 a{color:var(--teal);text-decoration:none}
-a:hover{text-decoration:underline}
-.wrap{max-width:760px;margin:0 auto;padding:0 20px 80px}
-header{padding:56px 0 28px;border-bottom:1px solid #24344f;margin-bottom:32px}
-h1{margin:0 0 8px;font-size:34px;letter-spacing:-.4px}
+a:hover{text-decoration:underline;text-underline-offset:3px}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 22px 96px}
+
+header{padding:56px 0 32px}
+.brand{display:flex;align-items:center;gap:14px;margin-bottom:18px}
+.brand img{width:52px;height:52px;border-radius:14px;box-shadow:0 6px 24px #0006}
+h1{margin:0;font-size:clamp(28px,5vw,40px);line-height:1.1;letter-spacing:-.9px;
+  font-weight:700}
 h1 a{color:var(--ink)}
-.tagline{color:var(--dim);margin:0 0 20px}
-.links a{margin-right:18px;font-weight:600}
-.board{background:var(--card);border:1px solid #24344f;border-radius:12px;
-  padding:18px 20px;margin:26px 0 0}
-.board h2{margin:0 0 12px;font-size:14px;text-transform:uppercase;
-  letter-spacing:1.2px;color:var(--dim);font-weight:700}
-.board .row{display:flex;justify-content:space-between;gap:12px;padding:5px 0;
-  border-bottom:1px solid #1e2c44;font-variant-numeric:tabular-nums}
-.board .row:last-child{border-bottom:0}
-.board .row span:last-child{font-weight:700}
+.tagline{color:var(--dim);margin:0 0 22px;font-size:18px;max-width:56ch}
+.links{display:flex;flex-wrap:wrap;gap:10px;margin:0}
+.links a{background:var(--card);border:1px solid var(--line);border-radius:999px;
+  padding:8px 16px;font-size:15px;font-weight:600;color:var(--ink);
+  transition:border-color .15s,transform .15s}
+.links a:hover{text-decoration:none;border-color:var(--teal);transform:translateY(-1px)}
+.links a.accent{background:linear-gradient(135deg,#2ED3C6,#1FA9C2);color:#06131f;
+  border-color:transparent}
+
+.board{margin:34px 0 8px}
+/* Подпись раздела отдельным классом, а не правилом для h2 внутри секции: такое
+   правило перебивало заголовки самих замеров — они набирались капсом в размер
+   подписи, потому что класс в селекторе весит больше, чем имя тега. */
+.eyebrow{margin:0 0 14px;font-size:13px;text-transform:uppercase;
+  letter-spacing:1.6px;color:var(--dim);font-weight:700}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(168px,1fr))}
+.stat{background:linear-gradient(180deg,var(--card2),var(--card));
+  border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;
+  display:flex;flex-direction:column;gap:5px}
+.stat span{color:var(--dim);font-size:13px}
+/* Значение и изменение не переносятся внутри себя: без этого знак валюты и минус
+   отрывались на следующую строку и повисали там отдельно от числа. */
+.stat b,.stat i{white-space:nowrap}
+.stat b{font-size:24px;font-weight:700;letter-spacing:-.5px}
+.stat i{font-style:normal;font-size:13px;font-weight:600}
+.stat i.note{color:var(--dim);font-weight:400;white-space:normal}
+.stat b{margin-top:auto}
 .up{color:var(--teal)}.down{color:var(--warn)}
-article{background:var(--card);border:1px solid #24344f;border-radius:12px;
-  padding:22px 24px;margin-bottom:22px}
-article h2{margin:0 0 4px;font-size:21px;line-height:1.35}
+
+.section{margin-top:44px;padding-top:8px}
+article{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  padding:26px 28px;margin-bottom:20px;transition:border-color .15s,transform .15s}
+.feed article:hover{border-color:#2f4568;transform:translateY(-2px)}
+article h2{margin:0 0 6px;font-size:23px;line-height:1.3;letter-spacing:-.4px;
+  font-weight:700}
 article h2 a{color:var(--ink)}
+article h2 a:hover{color:var(--teal);text-decoration:none}
 time{color:var(--dim);font-size:14px}
-article img{width:100%;height:auto;border-radius:8px;margin:16px 0;background:#fff}
-.body{margin-top:14px}
-.body b{color:#fff}
-.tags{margin-top:14px}
-.tags span{display:inline-block;background:#1e2c44;color:var(--dim);
-  border-radius:999px;padding:3px 11px;font-size:13px;margin:0 6px 6px 0}
-footer{color:var(--dim);font-size:14px;border-top:1px solid #24344f;
-  margin-top:40px;padding-top:22px}
-.empty{color:var(--dim);text-align:center;padding:60px 0}
+article img{width:100%;height:auto;border-radius:10px;margin:18px 0 4px;
+  background:#fff;border:1px solid var(--line)}
+.body{margin-top:16px}
+.body p{margin:0 0 15px}
+.body p:last-child{margin-bottom:0}
+.body b{color:#fff;font-weight:600}
+.excerpt{color:#C7D3E4;margin-top:14px}
+.more{display:inline-block;margin-top:14px;font-weight:600}
+.tags{margin-top:18px;display:flex;flex-wrap:wrap;gap:7px}
+.tags span{background:#1B2942;color:#9FB0C7;border:1px solid var(--line);
+  border-radius:999px;padding:4px 12px;font-size:13px}
+.nav{display:flex;justify-content:space-between;gap:14px;margin-top:26px;
+  font-weight:600}
+footer{color:var(--dim);font-size:14px;border-top:1px solid var(--line);
+  margin-top:56px;padding-top:24px}
+footer p{margin:0 0 12px}
+.empty{color:var(--dim);text-align:center;padding:72px 0}
+@media(max-width:600px){
+  article{padding:20px 18px}
+  body{font-size:16px}
+}
 """
 
 MONTHS = ("января", "февраля", "марта", "апреля", "мая", "июня", "июля",
@@ -139,8 +190,8 @@ def paragraphs(body: str) -> str:
     return "\n".join(out)
 
 
-def page(title: str, inner: str, *, board: str = "") -> str:
-    desc = html_mod.escape(SITE_TAGLINE, quote=True)
+def page(title: str, inner: str, *, board: str = "", description: str = "") -> str:
+    desc = html_mod.escape(description or SITE_TAGLINE, quote=True)
     return f"""<!doctype html>
 <html lang="ru">
 <head>
@@ -148,16 +199,25 @@ def page(title: str, inner: str, *, board: str = "") -> str:
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{html_mod.escape(title)}</title>
 <meta name="description" content="{desc}">
+<meta name="theme-color" content="#0B1524">
+<link rel="icon" href="avatar.png">
 <meta property="og:title" content="{html_mod.escape(title)}">
 <meta property="og:description" content="{desc}">
+<meta property="og:image" content="avatar.png">
 <meta property="og:type" content="website">
+<meta name="twitter:card" content="summary">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap">
 <style>{CSS}</style>
 </head>
 <body><div class="wrap">
 <header>
-<h1><a href="/orderflow/">{SITE_TITLE}</a></h1>
+<div class="brand">
+<a href="./"><img src="avatar.png" alt="{html_mod.escape(SITE_TITLE)}" width="52" height="52"></a>
+<h1><a href="./">{SITE_TITLE}</a></h1>
+</div>
 <p class="tagline">{SITE_TAGLINE}</p>
-<p class="links"><a href="{CHANNEL}">Канал в Telegram</a><a href="{REPO}">Код и данные</a></p>
+<p class="links"><a class="accent" href="{CHANNEL}">Читать в Telegram</a><a href="{REPO}">Код и данные</a></p>
 {board}
 </header>
 {inner}
@@ -172,33 +232,70 @@ def page(title: str, inner: str, *, board: str = "") -> str:
 
 
 def board_html() -> str:
-    """Живые цифры на главной. Те же, что в закрепе канала."""
+    """Живые цифры на главной плитками. Те же, что в закрепе канала.
+
+    Плитками, а не таблицей: у показателей разная природа — ставка, курс, цена с
+    суточным изменением, — и в двух колонках они выглядели бы однородным списком,
+    хотя ставка здесь главная, это планка для всех замеров.
+    """
     try:
-        from tg_board import cbr_rates, crypto_snapshot
+        from tg_board import cbr_rates, crypto_snapshot, imoex
 
         c = cbr_rates()
-        rows = [
-            ("Ключевая ставка ЦБ", f"{c['ставка']:.2f}%", ""),
-            ("Доллар ЦБ", f"{c['USD']:.2f} ₽", ""),
-            ("Юань ЦБ", f"{c['CNY']:.2f} ₽", ""),
+        # Подписи короткие и в одну строку у всех плиток: длинная подпись переносилась
+        # только у части из них, и плитки одного ряда получались разной высоты.
+        tiles = [
+            ("Ставка ЦБ", f"{c['ставка']:.2f}%", "", "", "планка доходности"),
+            ("Доллар ЦБ", f"{c['USD']:.2f} ₽", "", "", ""),
+            ("Юань ЦБ", f"{c['CNY']:.2f} ₽", "", "", ""),
         ]
+        index = imoex()
+        if index:
+            tiles.append((
+                "Индекс МОЕХ", f"{index['значение']:.2f}",
+                f"{index['изм_%']:+.2f}%",
+                "up" if index["изм_%"] >= 0 else "down", "к закрытию",
+            ))
         for r in crypto_snapshot():
-            cls = "up" if r["сутки_%"] >= 0 else "down"
-            rows.append((
-                f"{r['тикер']} · фандинг {r['фандинг_год_%']:+.1f}% годовых",
-                f"{r['цена']:,.2f} $ ({r['сутки_%']:+.1f}%)".replace(",", " "),
-                cls,
+            # Знак фандинга и суточное изменение раскрашены по-разному не случайно:
+            # покрасив фандинг цветом цены, мы утверждали бы, что они об одном, тогда
+            # как фандинг говорит, кто платит за удержание позиции, а не куда идёт цена.
+            tiles.append((
+                r["тикер"],
+                f"{r['цена']:,.2f} $".replace(",", " "),
+                f"{r['сутки_%']:+.1f}% за сутки",
+                "up" if r["сутки_%"] >= 0 else "down",
+                f"фандинг {r['фандинг_год_%']:+.1f}% годовых",
             ))
     except Exception as exc:
         print(f"живые цифры недоступны ({exc}) — главная соберётся без них")
         return ""
 
-    body = "\n".join(
-        f'<div class="row"><span>{html_mod.escape(k)}</span>'
-        f'<span class="{cls}">{html_mod.escape(v)}</span></div>'
-        for k, v, cls in rows
+    cells = "\n".join(
+        f'<div class="stat"><span>{html_mod.escape(label)}</span>'
+        f'<b>{html_mod.escape(value)}</b>'
+        + (f'<i class="{cls}">{html_mod.escape(delta)}</i>' if delta else "")
+        + (f'<i class="note">{html_mod.escape(note)}</i>' if note else "")
+        + "</div>"
+        for label, value, delta, cls, note in tiles
     )
-    return f'<div class="board"><h2>Живые цифры</h2>{body}</div>'
+    return (f'<div class="board"><p class="eyebrow">Живые цифры, обновляются сами</p>'
+            f'<div class="grid">{cells}</div></div>')
+
+
+def excerpt(body: str, limit: int = 260) -> str:
+    """Начало поста для ленты, обрезанное по границе слова.
+
+    В ленте нужен анонс, а не весь текст: замеры длинные, и десяток полных постов
+    подряд превращал бы главную в свиток, по которому нельзя выбрать интересное.
+    Обрезка по пробелу, а не по символу, чтобы строка не рвалась посреди слова.
+    """
+    plain = re.sub(r"<[^>]+>", "", body).replace("\n", " ")
+    plain = re.sub(r"\s+", " ", plain).strip()
+    if len(plain) <= limit:
+        return html_mod.escape(plain)
+    cut = plain[:limit].rsplit(" ", 1)[0]
+    return html_mod.escape(cut.rstrip(" ,.;:—-")) + "…"
 
 
 def load_posts() -> list[dict]:
@@ -216,6 +313,7 @@ def build() -> int:
     img_out.mkdir(exist_ok=True)
 
     cards = []
+    pages: list[dict] = []
     used: set[str] = set()
     for p in posts:
         title, body, tags = split_post(p["html"])
@@ -245,27 +343,61 @@ def build() -> int:
         cards.append(
             f'<article>\n<h2><a href="{page_name}">{title}</a></h2>\n'
             f'<time>{ru_date(p["время"])}</time>\n{img}\n'
-            f'<div class="body">{paragraphs(body)}</div>\n{tag_html}\n</article>'
+            f'<p class="excerpt">{excerpt(body)}</p>\n'
+            f'<a class="more" href="{page_name}">Читать замер →</a>\n'
+            f'{tag_html}\n</article>'
         )
+        pages.append({"файл": page_name, "заголовок": title, "тело": body,
+                      "картинка": img, "метки": tag_html, "время": p["время"]})
+
+    # Страницы пишутся после ленты: ссылки «предыдущий/следующий» требуют знать
+    # соседей, а на момент сборки карточки соседа ещё нет.
+    for i, pg in enumerate(pages):
+        links = []
+        if i + 1 < len(pages):
+            links.append(f'<a href="{pages[i + 1]["файл"]}">← {pages[i + 1]["заголовок"]}</a>')
+        else:
+            links.append('<a href="./">← Все замеры</a>')
+        if i > 0:
+            links.append(f'<a href="{pages[i - 1]["файл"]}">{pages[i - 1]["заголовок"]} →</a>')
         # Отдельная страница на пост: именно она попадает в выдачу поисковика, у
         # ленты для этого слишком общий заголовок.
-        (OUT / page_name).write_text(
+        (OUT / pg["файл"]).write_text(
             page(
-                f"{title} — {SITE_TITLE}",
-                f'<article>\n<h2>{title}</h2>\n<time>{ru_date(p["время"])}</time>\n'
-                f'{img}\n<div class="body">{paragraphs(body)}</div>\n{tag_html}\n'
-                f'<p><a href="./">← Все замеры</a></p></article>',
+                f"{pg['заголовок']} — {SITE_TITLE}",
+                f'<article>\n<h2>{pg["заголовок"]}</h2>\n'
+                f'<time>{ru_date(pg["время"])}</time>\n{pg["картинка"]}\n'
+                f'<div class="body">{paragraphs(pg["тело"])}</div>\n{pg["метки"]}\n'
+                f'<div class="nav">{"".join(links)}</div></article>',
+                description=re.sub(r"<[^>]+>", "", pg["заголовок"]),
             ),
             encoding="utf-8",
         )
 
-    inner = "\n".join(cards) if cards else (
+    inner = (f'<div class="section feed"><p class="eyebrow">Замеры</p>\n'
+             + "\n".join(cards) + "</div>") if cards else (
         '<p class="empty">Замеры появятся здесь сразу после первой публикации.</p>'
     )
     (OUT / "index.html").write_text(
         page(f"{SITE_TITLE} — {SITE_TAGLINE}", inner, board=board_html()),
         encoding="utf-8",
     )
+
+    # Аватар канала служит и favicon, и картинкой для соцсетей: ссылка на сайт
+    # должна узнаваться так же, как канал в ленте Telegram.
+    #
+    # Ищется в двух местах, потому что на сервере лежит только код, без репозитория:
+    # путь от файла модуля там уводит в корень диска, и аватар молча не находился —
+    # сайт собирался, а иконка отдавала 404.
+    for avatar in (
+        ARCHIVE.parent / "assets" / "avatar.png",
+        Path(__file__).resolve().parents[2] / "content" / "telegram" / "avatar.png",
+    ):
+        if avatar.exists():
+            shutil.copy2(avatar, OUT / "avatar.png")
+            break
+    else:
+        print("аватар не найден — favicon и картинка для соцсетей не появятся")
     # Отключает обработку Jekyll на GitHub Pages: иначе он игнорирует файлы и
     # каталоги, начинающиеся с подчёркивания, и молча ломает часть сайта.
     (OUT / ".nojekyll").write_text("", encoding="utf-8")

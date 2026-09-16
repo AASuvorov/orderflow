@@ -18,12 +18,15 @@
 времени. Всё остальное остаётся картинкам в обычных постах.
 
 Запуск:
-  python tg_video.py breakeven            # собрать и опубликовать
-  python tg_video.py breakeven --dry-run  # только собрать файл
+  python tg_video.py                      # клип из очереди, по давности выхода
+  python tg_video.py breakeven            # собрать и опубликовать конкретный
+  python tg_video.py rotation --dry-run   # только собрать файл
 """
 
 from __future__ import annotations
 
+import datetime as dt
+import json
 import os
 import subprocess
 import sys
@@ -276,19 +279,186 @@ def publish_video(path: Path, caption: str, *, dry_run: bool = False) -> None:
     print("опубликовано")
 
 
-CLIPS = {"breakeven": breakeven_clip}
+def rotation_clip(path: Path) -> tuple[Path, str]:
+    """Клип про ротацию монет: портфель против вклада, день за днём.
+
+    Здесь формат работает так, как ни на чём другом: у схемы есть развитие во
+    времени, и его невозможно оспорить пересказом. Линия вклада растёт ровно и
+    скучно, портфель дёргается и уходит вниз — расхождение видно раньше, чем
+    человек дочитает подпись.
+
+    Полоса двадцати жеребьёвок рисуется вместе с кривой не для красоты. Одна
+    кривая всегда вызывает возражение «просто монеты не те»; полоса показывает,
+    что не те они при любом выборе.
+
+    Данные пересчитываются при каждом запуске, поэтому клип не устаревает: набор
+    монет берётся по текущему обороту, окно — последний год.
+    """
+    ffmpeg_or_die()
+
+    from coin_rotation import (SLOTS, STAKE, benchmarks, load_prices, simulate,
+                               universe, window)
+
+    print("готовлю данные: набор монет и свечи")
+    prices = window(
+        load_prices(universe()),
+        dt.date.today() - dt.timedelta(days=365),
+        dt.date.today(),
+    )
+    if not prices:
+        raise SystemExit("нет данных за последний год")
+
+    length = min(df.height for df in prices.values())
+    draws = [simulate(prices, "случайно", seed=s)["кривая"] for s in range(20)]
+    hero = simulate(prices, "импульс")
+    curve = hero["кривая"]
+    marks = benchmarks(prices, length)
+    start = SLOTS * STAKE
+
+    low = np.array([min(d[i] for d in draws) for i in range(length)])
+    high = np.array([max(d[i] for d in draws) for i in range(length)])
+    days = np.arange(length)
+    # Линия вклада строится по дням, а не одной чертой на итоге: смысл именно в
+    # том, что она растёт всё это время, пока портфель ищет очередную монету.
+    deposit = start * (1 + 0.14) ** (days / 365)
+
+    t_curve, t_dep, t_hold = 6.0, 3.5, 4.0
+    total = t_curve + t_dep + t_hold
+    frames = int(total * FPS)
+
+    fig, ax = canvas()
+    ax.set_xlim(0, length)
+    ax.set_ylim(min(low.min(), start) * 0.85, max(high.max(), deposit[-1]) * 1.08)
+    ax.set_xlabel("дней с начала", color=GREY, fontsize=17)
+    # Доллар экранируется во всех подписях кадра: matplotlib принимает пару знаков
+    # доллара за формулу и вырезает всё между ними. В подписи «$49 из $100» это
+    # съедало и знаки, и пробелы, и на кадре оставалось «49из100».
+    ax.set_ylabel("портфель, \\$", color=GREY, fontsize=17)
+    ax.set_title(
+        "Продавать каждую монету на +10%:\nчто вышло за год",
+        color="white", fontsize=23, pad=18, fontweight="bold",
+    )
+    ax.axhline(start, color=GREY, lw=1.5, alpha=0.5)
+
+    band = ax.fill_between(days, low, high, color=GREY, alpha=0.0)
+    line, = ax.plot([], [], color=WARN, lw=4)
+    line_dep, = ax.plot([], [], color=TEAL, lw=4)
+    txt_dep = ax.text(0.04, 0.90, "", color=TEAL, fontsize=18,
+                      transform=ax.transAxes, alpha=0.0, fontweight="bold")
+    txt_end = ax.text(0.04, 0.13, "", color="white", fontsize=17,
+                      transform=ax.transAxes, alpha=0.0)
+    ax.text(0.985, 0.02, "@tradingnadannyh", color=GREY, fontsize=13,
+            transform=ax.transAxes, ha="right")
+
+    def draw(i: int) -> None:
+        t = i / FPS
+
+        # Сцена 1: портфель и полоса жеребьёвок ползут вправо одновременно.
+        k = ease(t / t_curve)
+        n = max(2, int(round(k * length)))
+        line.set_data(days[:n], curve[:n])
+        band.set_alpha(0.18 * k)
+
+        # Сцена 2: линия вклада догоняет и обходит.
+        if t > t_curve:
+            k2 = ease((t - t_curve) / t_dep)
+            m = max(2, int(round(k2 * length)))
+            line_dep.set_data(days[:m], deposit[:m])
+            if m >= length:
+                fade(txt_dep, t_curve + t_dep * 0.75, t)
+                txt_dep.set_text(
+                    f"вклад под ставку ЦБ: \\${marks['вклад']:.0f}\n"
+                    f"схема: \\${hero['итог']:.0f} из \\${start:.0f}"
+                )
+
+        # Сцена 3: вывод. Держится в кадре до конца.
+        if t > t_curve + t_dep:
+            fade(txt_end, t_curve + t_dep, t, span=1.2)
+            txt_end.set_text(
+                "Правило продаёт только выросшее.\n"
+                "Упавшее остаётся в портфеле навсегда."
+            )
+
+    fig.tight_layout()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    writer = FFMpegWriter(
+        fps=FPS,
+        bitrate=2400,
+        extra_args=["-pix_fmt", "yuv420p", "-movflags", "+faststart"],
+    )
+    with writer.saving(fig, str(path), dpi=DPI):
+        for i in range(frames):
+            draw(i)
+            writer.grab_frame(facecolor=NAVY)
+    plt.close(fig)
+
+    worst, best = low[-1], high[-1]
+    caption = (
+        f"<b>Схема «десять монет по ${STAKE:.0f}, продавать каждую на +10%» за год: "
+        f"${hero['итог']:.0f} из ${start:.0f}.</b> "
+        f"Вклад под ставку ЦБ за то же время дал ${marks['вклад']:.0f}.\n\n"
+        f"Серая полоса — двадцать жеребьёвок случайного выбора монет, от "
+        f"${worst:.0f} до ${best:.0f}. Ни одна не вышла в плюс. Значит дело не в "
+        "том, какие монеты выбрать: осмысленные правила отбора лежат внутри этой "
+        "же полосы.\n\n"
+        "Причина простая. Правило продаёт только то, что выросло на 10%, и молчит "
+        "про упавшее — поэтому прибыль из портфеля уходит, а убыток в нём "
+        "остаётся. К концу года свободных денег нет вовсе: всё лежит в позициях, "
+        "которые до цели не дошли.\n\n"
+        "Условия были щедрыми к схеме: продажа точно по цели, комиссия биржевая, "
+        f"монеты только с оборотом от $3 млн. Набор пересчитывается заново при "
+        "каждом запуске.\n\n"
+        "Это не рекомендация, а замер одного правила. Код открыт.\n\n"
+        "#замеры #крипта #ротациямонет"
+    )
+    return path, caption
+
+
+CLIPS = {"breakeven": breakeven_clip, "rotation": rotation_clip}
+
+VIDEO_STATE = OUT_DIR.parent / "meta" / "video.json"
+
+
+def next_clip() -> str:
+    """Клип, который не выходил дольше всех.
+
+    По кругу, а не случайно: случайный выбор из двух вариантов регулярно повторяет
+    один и тот же дважды подряд, и подписчик видит то же видео второй раз. Очередь
+    по давности выхода такого не допускает и не требует ничего, кроме одной даты
+    на клип.
+
+    Порядок не зашит в список: новый клип, у которого даты выхода ещё нет, встаёт
+    первым в очередь автоматически.
+    """
+    state = (json.loads(VIDEO_STATE.read_text(encoding="utf-8"))
+             if VIDEO_STATE.exists() else {})
+    return min(CLIPS, key=lambda name: state.get(name, ""))
+
+
+def remember_clip(name: str) -> None:
+    state = (json.loads(VIDEO_STATE.read_text(encoding="utf-8"))
+             if VIDEO_STATE.exists() else {})
+    state[name] = dt.datetime.now().isoformat(timespec="seconds")
+    VIDEO_STATE.parent.mkdir(parents=True, exist_ok=True)
+    VIDEO_STATE.write_text(json.dumps(state, ensure_ascii=False, indent=1),
+                           encoding="utf-8")
 
 
 def main() -> None:
     argv = [a for a in sys.argv[1:] if not a.startswith("--")]
     dry = "--dry-run" in sys.argv
-    name = argv[0] if argv else "breakeven"
+    name = argv[0] if argv else "auto"
+    if name == "auto":
+        name = next_clip()
+        print(f"очередь клипов: {name}")
     if name not in CLIPS:
-        raise SystemExit(f"клипы: {', '.join(CLIPS)}")
+        raise SystemExit(f"клипы: {', '.join(CLIPS)}, либо auto")
 
     out = Path(os.environ.get("ORDERFLOW_TG_OUT", OUT_DIR)) / f"{name}.mp4"
     path, caption = CLIPS[name](out)
     publish_video(path, caption, dry_run=dry)
+    if not dry:
+        remember_clip(name)
 
 
 if __name__ == "__main__":

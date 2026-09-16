@@ -167,10 +167,79 @@ AccuracySec=5m
 WantedBy=timers.target
 EOF
 
+# Видеоклип раз в неделю. Реже, чем всё остальное, по двум причинам: рендер
+# считает данные заново и стоит десятки секунд процессора, а главное — клип держит
+# внимание только пока он редкость. Ежедневное видео обесценило бы формат.
+cat >/etc/systemd/system/orderflow-video.service <<EOF
+[Unit]
+Description=Видеозамер из очереди клипов
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=$APP_DIR
+Environment=ORDERFLOW_DATA=$DATA_DIR
+Environment=MPLCONFIGDIR=$DATA_DIR/mpl
+EnvironmentFile=$ENV_FILE
+ExecStart=$APP_DIR/.venv/bin/python $APP_DIR/tg_video.py auto
+# Рендер кадров плюс выкачка свечей по всему набору монет.
+TimeoutStartSec=900
+EOF
+
+cat >/etc/systemd/system/orderflow-video.timer <<'EOF'
+[Unit]
+Description=Видеозамер, раз в неделю
+
+[Timer]
+# Четверг 15:00 UTC = 18:00 МСК: вечер рабочего дня, когда лента читается больше
+# всего, и в стороне от утреннего поста, чтобы два материала не делили внимание.
+OnCalendar=Thu 15:00:00
+Persistent=true
+AccuracySec=10m
+
+[Install]
+WantedBy=timers.target
+EOF
+
+# Оформление канала и группы. Отдельным юнитом и раз в сутки, потому что задача
+# ждёт внешнего события: пока бота не сделают администратором группы обсуждений,
+# настроить её нельзя, а спрашивать об этом ежечасно незачем. Модуль идемпотентен —
+# трогает только расхождения, поэтому лишние запуски ничего не стоят.
+cat >/etc/systemd/system/orderflow-group.service <<EOF
+[Unit]
+Description=Оформление канала и группы обсуждений
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=$APP_DIR
+Environment=ORDERFLOW_DATA=$DATA_DIR
+EnvironmentFile=$ENV_FILE
+ExecStart=$APP_DIR/.venv/bin/python $APP_DIR/tg_group.py
+TimeoutStartSec=120
+EOF
+
+cat >/etc/systemd/system/orderflow-group.timer <<'EOF'
+[Unit]
+Description=Оформление канала и группы, раз в сутки
+
+[Timer]
+OnCalendar=*-*-* 05:30:00
+Persistent=true
+AccuracySec=10m
+
+[Install]
+WantedBy=timers.target
+EOF
+
 systemctl daemon-reload
 systemctl enable --now orderflow-tg.timer
 systemctl enable --now orderflow-board.timer
 systemctl enable --now orderflow-events.timer
+systemctl enable --now orderflow-group.timer
+systemctl enable --now orderflow-video.timer
 
 echo
 echo "=== Готово ==="

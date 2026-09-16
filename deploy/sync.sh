@@ -33,11 +33,16 @@ push)
 	# ноутбуке они появляются только после pull.
 	rsync -avz "$SRC/moex_ticks.py" "$SRC/moex.py" "$SRC/watchdog.py" \
 		"$SRC/tg_post.py" "$SRC/tg_video.py" "$SRC/tg_events.py" \
-		"$SRC/tg_board.py" "$SRC/site_build.py" "$SRC/funding.py" \
+		"$SRC/tg_board.py" "$SRC/tg_group.py" "$SRC/site_build.py" \
+		"$SRC/coin_rotation.py" "$SRC/funding.py" \
 		"$SRC/mm_screen.py" "$SRC/moex_feasibility.py" \
 		"$HOST:$APP_DIR/"
 	rsync -avz "$ROOT/deploy/install.sh" "$ROOT/deploy/install-tg.sh" \
 		"$ROOT/deploy/install-site.sh" "$HOST:$APP_DIR/"
+	# Аватар нужен сайту как favicon и картинка для соцсетей. Кладётся к данным, а
+	# не к коду: на сервере нет репозитория, и путь от файла модуля уводит в корень.
+	ssh "$HOST" "mkdir -p $DATA_DIR/assets"
+	rsync -avz "$ROOT/content/telegram/avatar.png" "$HOST:$DATA_DIR/assets/"
 	echo
 	echo "Дальше на сервере:"
 	echo "  ssh $HOST 'bash $APP_DIR/install.sh'      # сбор тиков"
